@@ -6,6 +6,12 @@ tool runs the HLSL emitter alone (no DXC) on each recorded request and groups
 the refusal messages. Program counters and register numbers are masked, so
 identical gaps in different shaders share one row.
 
+The provider tries several roots for one program, so a refusal is often a
+discarded attempt rather than a lost program. Requests whose sibling differs
+only in root signature are grouped together: a refused request is excluded
+when a sibling request (same request kind, and the same linked pixel shader
+for a pair) translates.
+
 Example:
     python tools/triage_scarlett_shaders.py \\
         "$WINEPREFIX/drive_c/users/steamuser/AppData/Local/Temp/tuxbox_shader_cache/projectscarlett/<exe sha256>/requests" \\
@@ -31,12 +37,41 @@ from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from project_tuxbox.runtime_shaders import REQUEST_PATTERNS, XSHADER_UNSUPPORTED_HLSL, ShaderRefused
+from project_tuxbox.runtime_shaders import MAX_SHADER_BYTES, REQUEST_PATTERNS, XSHADER_UNSUPPORTED_HLSL, ShaderRefused
+from project_tuxbox.shader_pack import program_digest
 from project_tuxbox.scarlett_report import refusal_bucket, failure_bucket
 
 from project_tuxbox.shader_diagnostics import normalize_refusal as normalize
 from tools.scarlett_replay_integrity import snapshot_request, pin_emitter
 from project_tuxbox.inspect import digest
+
+
+def sibling_key(source):
+    """Group requests that differ only in root signature.
+
+    The provider tries several roots for one pipeline, so a refused request is
+    often a discarded attempt rather than a lost translation. Requests that
+    carry a different request kind, or a different render-target, wave-width or
+    linked-pixel variant, are separate translations even when they carry the
+    same program; those are never counted as siblings.
+    """
+    suffix = source.suffix
+    path = source / "producer.dxbc" if suffix == ".link" else source
+    try:
+        with path.open("rb") as stream:
+            program = program_digest(stream.read(MAX_SHADER_BYTES))
+    except OSError:
+        program = None
+    program = program or source.stem[:64]
+    if suffix == ".link":
+        try:
+            with (source / "pixel.dxbc").open("rb") as stream:
+                pixel = program_digest(stream.read(MAX_SHADER_BYTES))
+        except OSError:
+            pixel = None
+        return ("link", program, pixel or "-")
+    variant = source.stem[64:] if len(source.stem) > 64 else ""
+    return (suffix, program, variant)
 
 
 def construct(reason):
@@ -89,23 +124,35 @@ def probe(xshader, source, timeout, *, aggregate_only=False):
 
 
 def triage(xshader, sources, jobs, timeout, examples, *, aggregate_only=False):
-    totals = Counter()
-    reasons = Counter()
-    samples = defaultdict(list)
-    failures = Counter()
     with ThreadPoolExecutor(max_workers=jobs) as pool:
-        for source, status, reason in pool.map(lambda s: probe(xshader, s, timeout, aggregate_only=aggregate_only), sources):
-            totals[status] += 1
+        results = list(pool.map(lambda s: probe(xshader, s, timeout, aggregate_only=aggregate_only), sources))
+    programs = defaultdict(list)
+    for source, status, reason in results:
+        programs[sibling_key(source)].append((source, status, reason))
+    totals, reasons, failures = Counter(), Counter(), Counter()
+    samples = defaultdict(list)
+    discarded = 0
+    for _, entries in programs.items():
+        translated = any(status == "translated" for _, status, _ in entries)
+        for source, status, reason in entries:
             if status == "refused":
+                if translated:
+                    # A discarded attempt: the program translated via a sibling request.
+                    discarded += 1
+                    continue
+                totals["refused"] += 1
                 reasons[reason] += 1
                 if not aggregate_only and len(samples[reason]) < examples:
                     samples[reason].append(source.name)
             elif status == "failed":
+                totals["failed"] += 1
                 failures[reason] += 1
+            else:
+                totals["translated"] += 1
     groups = Counter()
     for reason, count in reasons.items():
         groups[construct(reason)] += count
-    return {
+    report = {
         **({"aggregate_only": True} if aggregate_only else {"xshader": str(xshader)}),
         "totals": {"requests": len(sources), **{k: totals[k] for k in ("translated", "refused", "failed")}},
         "constructs": [{"construct": name, "count": count} for name, count in groups.most_common()],
@@ -113,6 +160,8 @@ def triage(xshader, sources, jobs, timeout, examples, *, aggregate_only=False):
                     for reason, count in reasons.most_common()],
         "failures": [{"reason": reason, "count": count} for reason, count in failures.most_common()],
     }
+    report["discarded_requests"] = discarded
+    return report
 
 
 # The runtime logs each newly refused key; cache hits only appear in aggregate.
@@ -230,6 +279,10 @@ def markdown(report, top):
             "| ---: | ---: | ---: | ---: |",
             "| {requests:,} | {translated:,} | {refused:,} | {failed:,} |".format(**report["totals"]),
         ]
+        if report.get("discarded_requests"):
+            lines.append("")
+            lines.append("{discarded:,} refused requests excluded: their program translated via a sibling request.".format(
+                discarded=report["discarded_requests"]))
     lines += [
         "",
         "| Construct | Refused | Share |",

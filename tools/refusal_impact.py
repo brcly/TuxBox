@@ -125,7 +125,7 @@ def main(argv=None):
         print("Expected at preparation (not actionable here)")
         for bucket, entry in expected:
             (reason, _), = entry["reasons"].most_common(1)
-        print(f"{entry['pipelines']:8d}  {max(entry['shaders']):7d}  {bucket:32s}  {reason[:72]}")
+            print(f"{entry['pipelines']:8d}  {max(entry['shaders']):7d}  {bucket:32s}  {reason[:72]}")
 
     print()
     print("Not translator refusals")

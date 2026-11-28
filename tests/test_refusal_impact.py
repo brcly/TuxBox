@@ -4,6 +4,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from unittest.mock import patch
+
 from tools.refusal_impact import main
 
 
@@ -45,6 +47,24 @@ class RefusalImpact(unittest.TestCase):
             # ds_write2_b32 (10 pipelines) outranks non-uniform-loop readlane (2).
             self.assertLess(text.index("mixed_lane_ds_write2_b32"),
                             text.index("readlane_non_uniform_loop"))
+
+    def test_every_expected_bucket_is_printed(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_cache(
+                root,
+                "3\tstand-in\tslot62\tCS=rootless CS.refused=mesh root signature missing\n"
+                "4\tstand-in\tslot62\tCS=blank CS.refused=unsupported mesh launch or output configuration: MeshInfo { vertices: 128, primitives: 128, topology: 2, threads: [128, 1, 1], payload: 0, shared_bytes: 3072 }\n",
+                {"rootless": "mesh root signature missing"},
+            )
+            with patch("tools.refusal_impact.expected_at_preparation",
+                       lambda bucket: bucket in ("mesh_root_layout", "mesh_launch")):
+                output = StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(main([str(root)]), 0)
+            expected = output.getvalue().split("Expected at preparation")[1].split("Not translator refusals")[0]
+            self.assertIn("mesh_root_layout", expected)
+            self.assertIn("mesh_launch", expected)
 
     def test_non_refusal_reasons_are_excluded_from_actionable(self):
         with TemporaryDirectory() as tmp:
