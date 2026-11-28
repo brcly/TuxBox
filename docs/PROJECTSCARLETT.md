@@ -1,6 +1,6 @@
 # Set up ProjectScarlett (GTA VI) on Linux
 
-This guide stages GTA VI 1.0.2.1 (`ProjectScarlett`) with TuxBox's providers and starts it on GE-Proton. The game reaches the prologue cutscene and then crashes; it isn't playable. [What to expect](#what-to-expect) · [Title progress](PROGRESS.md) · [Run record](../evidence/projectscarlett-gameplay.json)
+This guide stages GTA VI 1.0.2.1 (`ProjectScarlett`) with TuxBox's providers and starts it on GE-Proton. The game renders the opening world scene, far too slowly to play, and then the GPU faults. [What to expect](#what-to-expect) · [Title progress](PROGRESS.md) · [Run record](../evidence/projectscarlett-gameplay.json)
 
 You supply the game package. TuxBox doesn't include any game files. The recorded runs use package `RockstarGamesInc.28872443D20A7` 1.0.2.1, whose `game_scarlett_master.exe` has SHA-256 `e95020b2fa4a721db3df59fdecf75621730ac559d8835252f6c3b658d5a08993`. Other builds may need different providers or shader requests.
 
@@ -279,8 +279,33 @@ python tuxbox.py run --prepare-only --backend proton --prefix PREFIX /path/to/sc
 
 ## What to expect
 
-The game currently gets as far as the prologue cutscene, which appears, and then
-crashes. The runs described below are earlier ones with saved records or reports.
+On November 28, 2026, an offline run on a GeForce RTX 4070 Ti SUPER rendered the
+opening world scene for the first time, a night skyline seen past a fence and an
+overhang. Frames took 11 to 17 seconds. About five minutes after launch, with
+shaders prepared, the kernel logged Xid 13 (a shader memory fault) and the game
+ended on its own breakpoint. In a traced run, every draw that had started and not
+finished used the distant lights shaders. Which access faults isn't known. The
+picture hasn't been compared with a console's.
+
+- **Memory.** A run still needs much more than the console's. Near the world scene
+  the process had committed about 17 GB, beside about 12 GB of video memory, on a
+  32 GB machine whose swap was compressed RAM. TuxBox
+  [releases unused pipelines, keeps textures within the video memory budget and
+  skips mips a texture doesn't hold](FOCUS.md#memory). Close other programs that
+  use much memory, including virtual machines, and clear large temporary files
+  if `/tmp` is held in memory.
+- **Speed.** Frame times in the world have not been investigated.
+- **Missing effects.** Some shaders are still unsupported, and large compute
+  pipelines can receive empty stand-ins. Expect missing or wrong rendering.
+  [Shader coverage](SHADERS.md#projectscarlett-refusals)
+- **Not yet verified:** input and audio during play, any AMD card for the changes
+  of November 28, and Windows.
+
+To find what the GPU was running when it was lost, start the game with
+`TUXBOX_TRACE_GPU_FAULT=1`. The log then names the draws and dispatches that
+started and did not finish, with their shaders.
+
+### Earlier runs
 
 The two shader and memory paths added on November 26, 2026 have passed TuxBox's
 checks. The [memory copy](USAGE.md#memory-copy) on AMD's Linux driver hasn't
@@ -306,34 +331,13 @@ list ran out of descriptor memory. The prologue cutscene did not appear in that
 run.
 [Run record](../evidence/projectscarlett-gameplay.json)
 
-- **Fence stalls.** TuxBox now records the game's fence value writes, keeps a
-  list's other work when one command can't be recorded, and no longer makes a
-  queue wait on work that sits behind a label wait. These are checked by the
-  [Lanes self-test](../examples/lanes/README.md#self-test). Stalls still occur at
-  the intro. A wait that never completes is released after five seconds, and the
-  log reports which lists write the label and where each queue stopped.
-- **Descriptor memory.** Since #172, shader-visible descriptor slots are reused
-  once the GPU has finished the work that referenced them, and the oldest are
-  evicted when the heap fills. The [Lanes self-test](../examples/lanes/README.md#self-test)
-  checks this, but no long game run has confirmed it yet. Dispatches and draws
-  that index the resource heap directly were skipped on paged layouts
-  ([#232](https://github.com/brcly/TuxBox/issues/232));
-  [#235](https://github.com/brcly/TuxBox/pull/235),
-  [#294](https://github.com/brcly/TuxBox/pull/294) and
-  [#295](https://github.com/brcly/TuxBox/pull/295) added their descriptor maps,
-  which no long game run has confirmed either.
-- **Missing effects.** Many shaders are still unsupported, and large compute
-  pipelines can receive empty stand-ins. Expect missing or wrong rendering.
-  Image correctness hasn't been checked. [Shader coverage](SHADERS.md#projectscarlett-refusals)
-- **Long loads.** Shaders the game hasn't requested before are translated while
-  it runs, and the driver takes minutes to compile the largest ones. Earlier
-  runs on another Proton build saw single compiles of most of an hour.
-- **Memory.** A run needs far more than the console's. On November 27 one used
-  28.5 GB of RAM and swap within a few minutes, so a 32 GB machine needs disk
-  swap as well. [Where to improve](FOCUS.md#memory). On a machine whose
-  `/tmp` is held in memory, clear large temporary files before launching.
-- **Not yet verified:** input and audio during play, frame times, and any other
-  GPU or Windows.
+Since then, a wait holds while a list that writes its value is recorded or still
+running, a list whose ray tracing source was replaced no longer stops its queue,
+and the ray tracing structures the title builds in its own memory are built. A
+wait that nothing will satisfy is still released after five seconds, and the log
+reports which lists write the label and where each queue stopped. Descriptor
+slots are reused once the GPU has finished with them (#172), and eviction no
+longer holds up submission (#395).
 
 An earlier run record covers startup up to the player selection prompt at
 3840×2160. [Startup record](../evidence/projectscarlett-startup.json)

@@ -79,7 +79,7 @@ What we know:
 
 | ID | Task | Done when |
 | --- | --- | --- |
-| T14 | **Per-stage baseline.** For a fixed set of recorded shaders, record time and memory in the translator, DXC, DXV, vkd3d-proton and the driver, on both cards. Add size and time to the harness report | One command reproduces the table |
+| T14 | **Done: [per-stage baseline](SHADER_HARNESS.md#per-stage-baseline).** For a fixed set of recorded shaders, `python tools/stage_baseline.py run` records time and memory in the translator, DXC, DXV, vkd3d-proton and the driver, on each card, and the harness report gives size and translation time | One command reproduces the table |
 | T15 | **Trial: write DXIL directly.** For straight-line compute programs only, write DXIL from the intermediate form without DXC. Check that Windows and vkd3d-proton accept the container, compare results on the GPU with the HLSL route, and time it against T14 | A written result with the numbers |
 | T16 | **Trial: SPIR-V on Linux.** Confirm whether any unpatched route exists. If one does, repeat T15 for it | A written answer |
 | T17 | **Decide.** Adopt a direct backend if it gives identical results on both cards and a clear gain in time to a ready pipeline; we suggest at least three times faster as the bar. Otherwise keep HLSL and put the effort into T18 | The decision and its numbers are in this file |

@@ -138,7 +138,7 @@ On November 26, 2026, preparation compiled 36,653 of 41,064 recorded requests an
 | Image sample from an unordered-access table the root doesn't describe (`u7`) | 236 |
 | Lane operation with a non-constant lane | 203 |
 
-Translator changes since then have removed many of these. On November 27 the translator alone, without DXC, translated 38,263 of 42,672 recorded requests.
+Translator changes since then have removed many of these. On November 28, preparation compiled 18,852 of the 25,889 programs in the title's shader pack and found 165 unsupported; the rest had no recorded request. By request, 42,108 compiled, 131 were cached and 4,042 were refused, in about 20 minutes. A program counts once, however many requests use it.
 
 The counts are per recorded request, so they overstate what a live run loses: a request recorded without its root signature can't be translated offline. Rank failures by the pipelines a run lost with the [pipeline failure record](PROJECTSCARLETT.md#finding-why-pipelines-fail).
 
