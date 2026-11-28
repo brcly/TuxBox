@@ -1,4 +1,5 @@
 //! Scarlett Texture2D layout and array addressing for single-sample color textures.
+mod addresses;
 mod tiled;
 mod volume;
 mod element;
@@ -8,6 +9,7 @@ mod msaa_color;
 #[cfg(test)]
 #[path = "tests/lib.rs"]
 mod tests;
+pub use addresses::MipAddresses;
 pub use depth::DepthStencil;
 
 use windows_sys::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL};
