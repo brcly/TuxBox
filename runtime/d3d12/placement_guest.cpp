@@ -233,8 +233,140 @@ std::string run(const wchar_t* requested, bool) {
                   selected.VendorId, selected.DeviceId, config.end ? 4 : 3, config.end ? 1 : 0);
     return receipt;
 }
+
+// A render target at a guest address lives in device memory. Releasing it must
+// not free that memory while the title still owns the range: another image placed
+// there sees the texels, as it would in console memory (#323).
+std::string run_render_heap(const wchar_t* requested, bool) {
+    DXGI_ADAPTER_DESC1 selected{};
+    auto device = create_device(requested, selected, release_profile.data());
+    // The layout-based placement keeps images without a console layout in device memory.
+    using PlaceLayout = HRESULT (WINAPI*)(ID3D12Device*, UINT64, const D3D12_RESOURCE_DESC*, D3D12_BARRIER_LAYOUT,
+                                          const D3D12_CLEAR_VALUE*, REFIID, void**);
+    const auto place = method<PlaceLayout>(device.Get(), 133);
+    constexpr UINT side = 256, pitch = side * 4;
+    constexpr SIZE_T guest_bytes = 4u << 20;
+    auto* guest = static_cast<BYTE*>(VirtualAlloc(nullptr, guest_bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    if (!guest) throw std::runtime_error("commit guest VA");
+    const auto base = reinterpret_cast<UINT64>(guest);
+
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = side;
+    desc.Height = side;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    D3D12_COMMAND_QUEUE_DESC queue_desc{};
+    ComPtr<ID3D12CommandQueue> queue;
+    ComPtr<ID3D12Fence> fence;
+    ComPtr<ID3D12CommandAllocator> allocator;
+    check(device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&queue)), "create direct queue");
+    check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)), "create completion fence");
+    check(device->CreateCommandAllocator(queue_desc.Type, IID_PPV_ARGS(&allocator)), "create allocator");
+    D3D12_DESCRIPTOR_HEAP_DESC view_desc{};
+    view_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    view_desc.NumDescriptors = 1;
+    UINT64 tick = 0;
+    auto submit = [&](auto&& record) {
+        ComPtr<ID3D12GraphicsCommandList> list;
+        check(allocator->Reset(), "reset allocator");
+        const UINT list_desc[]{D3D12_COMMAND_LIST_TYPE_DIRECT, 0, 1, 0};
+        check(method<CreateList>(device.Get(), 73)(device.Get(), list_desc, allocator.Get(), nullptr, IID_PPV_ARGS(&list)),
+              "create command list");
+        record(list.Get());
+        check(list->Close(), "close command list");
+        ID3D12CommandList* batch[] = {list.Get()};
+        queue->ExecuteCommandLists(1, batch);
+        check(queue->Signal(fence.Get(), ++tick), "signal");
+        compute_fixture::wait_for_fence(fence.Get(), tick);
+    };
+    auto clear = [&](ID3D12Resource* texture, D3D12_RESOURCE_STATES state, const float (&rgba)[4]) {
+        ComPtr<ID3D12DescriptorHeap> view;
+        check(device->CreateDescriptorHeap(&view_desc, IID_PPV_ARGS(&view)), "create RTV heap");
+        const D3D12_CPU_DESCRIPTOR_HANDLE rtv{method<CpuHandle>(view.Get(), 9)(view.Get())};
+        device->CreateRenderTargetView(texture, nullptr, rtv);
+        submit([&](ID3D12GraphicsCommandList* list) {
+            compute_fixture::transition(list, texture, state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            method<Clear>(list, 52)(list, rtv, rgba, 0, nullptr);
+            compute_fixture::transition(list, texture, D3D12_RESOURCE_STATE_RENDER_TARGET, state);
+        });
+    };
+
+    // The title's image, cleared, then released.
+    ComPtr<ID3D12Resource> first;
+    check(place(device.Get(), base, &desc, D3D12_BARRIER_LAYOUT_COMMON, nullptr, IID_PPV_ARGS(&first)),
+          "place render target at guest address");
+    const float kept[4]{64 / 255.f, 128 / 255.f, 192 / 255.f, 1.f};
+    clear(first.Get(), D3D12_RESOURCE_STATE_COMMON, kept);
+    first.Reset();
+    // The provider keeps the resources of released descriptors for a few seconds.
+    // The title in #323 read the range minutes later.
+    Sleep(4000);
+
+    // Heaps like the one the first image had, cleared red, so that memory the
+    // driver recycles from a freed heap cannot carry the texels by chance.
+    // GetResourceAllocationInfo returns its struct through a pointer in the guest ABI.
+    using AllocationInfo = void (WINAPI*)(D3D12_RESOURCE_ALLOCATION_INFO*, ID3D12Device*, UINT, UINT,
+                                          const D3D12_RESOURCE_DESC*);
+    D3D12_RESOURCE_ALLOCATION_INFO info{};
+    method<AllocationInfo>(device.Get(), 25)(&info, device.Get(), 0, 1, &desc);
+    if (!info.SizeInBytes || info.SizeInBytes == UINT64_MAX) throw std::runtime_error("render target allocation info");
+    D3D12_HEAP_DESC heap_desc{};
+    heap_desc.SizeInBytes = info.SizeInBytes;
+    heap_desc.Alignment = info.Alignment;
+    heap_desc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+    std::vector<ComPtr<ID3D12Heap>> others(8);
+    std::vector<ComPtr<ID3D12Resource>> fillers(others.size());
+    const float red[4]{1.f, 0.f, 0.f, 1.f};
+    for (size_t i = 0; i < others.size(); ++i) {
+        check(device->CreateHeap(&heap_desc, IID_PPV_ARGS(&others[i])), "create other heap");
+        check(device->CreatePlacedResource(others[i].Get(), 0, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                           IID_PPV_ARGS(&fillers[i])), "place other render target");
+        clear(fillers[i].Get(), D3D12_RESOURCE_STATE_COMMON, red);
+    }
+
+    // The same image placed again at the same guest address reads what the first wrote.
+    ComPtr<ID3D12Resource> second;
+    check(place(device.Get(), base, &desc, D3D12_BARRIER_LAYOUT_COMMON, nullptr, IID_PPV_ARGS(&second)),
+          "place render target again");
+    auto readback = compute_fixture::buffer(device.Get(), D3D12_HEAP_TYPE_READBACK, UINT64(pitch) * side,
+                                            D3D12_RESOURCE_STATE_COPY_DEST);
+    submit([&](ID3D12GraphicsCommandList* list) {
+        compute_fixture::transition(list, second.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_TEXTURE_COPY_LOCATION from{}, to{};
+        from.pResource = second.Get();
+        from.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        to.pResource = readback.Get();
+        to.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        to.PlacedFootprint.Footprint = {desc.Format, side, side, 1, pitch};
+        method<Copy>(list, 83)(list, &to, 0, 0, 0, &from, nullptr, 0);
+        compute_fixture::transition(list, second.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+    });
+    D3D12_RANGE range{0, SIZE_T(pitch) * side}, empty{};
+    void* mapped{};
+    check(readback->Map(0, &range, &mapped), "map readback");
+    UINT matching = 0;
+    for (UINT i = 0; i < side * side; ++i)
+        matching += static_cast<const UINT*>(mapped)[i] == 0xffc08040u;
+    readback->Unmap(0, &empty);
+    second.Reset();
+    VirtualFree(guest, 0, MEM_RELEASE);
+    if (matching != side * side)
+        throw std::runtime_error("the second image kept " + std::to_string(matching) + " of " +
+                                 std::to_string(side * side) + " texels");
+    char receipt[120];
+    std::snprintf(receipt, sizeof(receipt), "d3d12-render-heap PASS pci=%04x:%04x slot=133 kept=%u/%u",
+                  selected.VendorId, selected.DeviceId, matching, side * side);
+    return receipt;
+}
 }
 
 int wmain(int argc, wchar_t** argv) {
+    if (argc > 1 && !std::wcscmp(argv[1], L"--render-heap"))
+        return tuxbox_test::frame_main(argc - 1, argv + 1, "d3d12-render-heap", false, run_render_heap);
     return tuxbox_test::frame_main(argc, argv, "d3d12-placement", false, run);
 }

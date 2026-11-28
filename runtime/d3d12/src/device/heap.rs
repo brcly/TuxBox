@@ -443,9 +443,14 @@ pub(super) struct RenderHeap {
 // Device-local heaps for images placed at guest addresses whose texels the
 // guest only reaches through the GPU. Keyed by guest address so later images
 // at the same address alias, as they do in console memory.
+//
+// Releasing an image does not free console memory: the title still owns the
+// range, may read it through descriptors it made earlier, and may place another
+// image there that sees the old texels. So a heap stays while an image uses it
+// or any page of its guest range is still committed (#323).
 #[derive(Default)]
 pub(super) struct RenderHeaps(
-    std::sync::Mutex<std::collections::BTreeMap<u64, std::sync::Weak<RenderHeap>>>,
+    std::sync::Mutex<std::collections::BTreeMap<u64, std::sync::Arc<RenderHeap>>>,
     std::sync::OnceLock<bool>,
 );
 
@@ -469,19 +474,18 @@ impl RenderHeaps {
             return Err(E_NOTIMPL.into());
         }
         let mut heaps = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        heaps.retain(|_, entry| entry.strong_count() != 0);
-        if let Some((&base, entry)) = heaps.range(..end).next_back()
-            && let Some(heap) = entry.upgrade()
+        heaps.retain(|&base, heap| Arc::strong_count(heap) > 1 || any_committed(base, heap.end));
+        if let Some((&base, heap)) = heaps.range(..end).next_back()
             && heap.end > address
             && base <= address && end <= heap.end && (address - base).is_multiple_of(alignment) {
-            return Ok((heap, address - base));
+            return Ok((heap.clone(), address - base));
         }
         // The title reuses guest memory for a larger or differently placed
         // image. Cover every overlapping heap's range with a new heap so later
         // placements here alias each other. Earlier images keep their heap.
         let (mut start, mut stop) = (address, end);
-        for (&base, entry) in heaps.range(..end) {
-            if let Some(heap) = entry.upgrade() && heap.end > address {
+        for (&base, heap) in heaps.range(..end) {
+            if heap.end > address {
                 start = start.min(base);
                 stop = stop.max(heap.end);
             }
@@ -501,9 +505,30 @@ impl RenderHeaps {
         let mut native = None;
         unsafe { device.CreateHeap(&desc, &mut native)? };
         let heap = Arc::new(RenderHeap { native: native.ok_or(E_POINTER)?, end: stop });
-        heaps.insert(start, Arc::downgrade(&heap));
+        heaps.insert(start, heap.clone());
         Ok((heap, address - start))
     }
+}
+
+/// Whether any page in `start..end` is committed guest memory.
+fn any_committed(start: u64, end: u64) -> bool {
+    use windows::Win32::System::Memory::{MEM_COMMIT, MEMORY_BASIC_INFORMATION, VirtualQuery};
+    let mut cursor = start;
+    while cursor < end {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        // SAFETY: VirtualQuery only inspects the process memory map.
+        if unsafe { VirtualQuery(Some(cursor as _), &mut region, size_of_val(&region)) } == 0 {
+            return false;
+        }
+        if region.State == MEM_COMMIT {
+            return true;
+        }
+        match (region.BaseAddress as u64).checked_add(region.RegionSize as u64) {
+            Some(next) if next > cursor => cursor = next,
+            _ => return false,
+        }
+    }
+    false
 }
 
 unsafe fn place_gpu_target(

@@ -33,6 +33,7 @@ CASES = {
     "alias-deferred": ("d3d12-copy-resource", ("--alias-deferred",), "d3d12-alias-deferred", ("overlaps=2", "old=verified", "refreshed=verified", "no_cpu_wait=1")),
     "copy-resource": ("d3d12-copy-resource", (), "d3d12-copy-resource", ("placed_dst=verified", "cpu_writeback=verified", "overlap_mips=4", "pending_reader=verified")),
     "placement": ("d3d12-placement", (), "d3d12-placement", ("R8-texels=262144", "rejected=3")),
+    "render-heap": ("d3d12-placement", ("--render-heap",), "d3d12-render-heap", ("slot=133", "kept=65536/65536")),
     "stream": ("d3d12-draw", ("--stream",), "d3d12-stream", ("slot=86", "rejected=4")),
     "mesh": ("d3d12-mesh", (), "d3d12-mesh", ("pixels=256/256", "guards=32", "rejected=5")),
     "frame": ("xbox-frame", (), "xbox-frame", ("pixels=962/962",)),
