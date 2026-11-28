@@ -273,8 +273,12 @@ impl Word {
     }
 }
 
-/// How long the queue is held for a guest memory word before it is released.
+/// How long the queue is held for a guest memory word that nothing is going to
+/// write, before it is released.
 const STALL: Duration = Duration::from_secs(5);
+
+/// How often a wait held past `STALL` looks again for the list that writes it.
+const WRITER_CHECK: Duration = Duration::from_millis(100);
 
 pub(super) struct Segment {
     prefix: Option<(ID3D12CommandList, ID3D12CommandAllocator)>,
@@ -691,6 +695,32 @@ impl Drop for ActiveWaitGuard {
 }
 
 mod fence_poll;
+mod recorded_writes;
+pub(super) use recorded_writes::{LabelWrites, note as note_recorded_write};
+
+/// `queue` was given the lists of `writes` in a batch that has run once
+/// `fence` reaches `value`. Until then they hold the other queues' waits.
+pub(super) fn label_writes_submitted(
+    writes: Vec<Arc<LabelWrites>>,
+    queue: &ID3D12CommandQueue,
+    fence: &ID3D12Fence,
+    value: u64,
+) {
+    struct Progress(ID3D12Fence, u64);
+    // SAFETY: D3D12 fences are free-threaded.
+    unsafe impl Send for Progress {}
+    unsafe impl Sync for Progress {}
+    impl Progress {
+        fn done(&self) -> bool {
+            // SAFETY: the fence is live while this holds it.
+            let completed = unsafe { self.0.GetCompletedValue() };
+            // A removed device completes nothing more.
+            completed >= self.1 || completed == u64::MAX
+        }
+    }
+    let progress = Progress(fence.clone(), value);
+    recorded_writes::submitted(writes, queue.as_raw().addr(), move || progress.done());
+}
 
 // Poll removal while waiting for a notification; a healthy slow prefix
 // retains its original ordering and has no new deadline.
@@ -761,11 +791,20 @@ struct Job {
     release_val: u64,
     segment: Arc<Segment>,
     device: ID3D12Device,
+    /// The queue the wait holds.
+    queue: usize,
     /// Unreleased label waits of the batch this one belongs to.
     waits: Option<crate::device::placement::held::Waits>,
 }
 
 impl Job {
+    /// Whether a write that satisfies the wait is still to run: recorded in a
+    /// list no queue has taken yet, or in a batch another queue has not run.
+    fn writer_is_coming(&self) -> bool {
+        let segment = &self.segment;
+        recorded_writes::coming(segment.address, segment.comparison, segment.target, self.queue)
+    }
+
     fn release_wait(&mut self) {
         if let Some(waits) = self.waits.take() {
             waits.fetch_sub(1, Ordering::AcqRel);
@@ -855,27 +894,43 @@ impl Worker {
                                 job.segment.target,
                             );
                             let _guard = ActiveWaitGuard::enter(held);
+                            // When to look for the list that writes the value: once
+                            // the wait is `STALL` old, then every `WRITER_CHECK`
+                            // for as long as there is one.
+                            let mut look_at = STALL;
+                            let mut held_reported = false;
                             while !job.segment.reached() {
                                 unsafe {
                                     job.device.GetDeviceRemovedReason()?;
                                 }
                                 let elapsed = started.elapsed();
-                                if elapsed >= STALL {
-                                    // Nothing wrote the value, for example because
-                                    // the work that should have was dropped. A queue
-                                    // held forever trips the title's GPU watchdog.
-                                    report_stall(
-                                        job.segment.address,
-                                        job.segment.comparison,
-                                        job.segment.target,
-                                        job.segment.word.value(),
-                                    );
-                                    break;
+                                if elapsed >= look_at {
+                                    if !job.writer_is_coming() {
+                                        // Nothing wrote the value, for example because
+                                        // the work that should have was dropped. A queue
+                                        // held forever trips the title's GPU watchdog.
+                                        report_stall(
+                                            job.segment.address,
+                                            job.segment.comparison,
+                                            job.segment.target,
+                                            job.segment.word.value(),
+                                        );
+                                        break;
+                                    }
+                                    // The list that writes the value is recorded, or
+                                    // another queue is running it: the title is only
+                                    // slower than `STALL`, and what waits here needs
+                                    // that work.
+                                    if !held_reported {
+                                        held_reported = true;
+                                        report_held(&job.segment);
+                                    }
+                                    look_at = elapsed + WRITER_CHECK;
                                 }
                                 wait_for_progress(
                                     &job.segment,
                                     elapsed,
-                                    STALL.saturating_sub(elapsed),
+                                    look_at.saturating_sub(elapsed),
                                 );
                             }
                         }
@@ -951,6 +1006,23 @@ fn wait_for_progress(segment: &Segment, elapsed: Duration, remaining: Duration) 
         return;
     }
     NOTIFIER.wait_timeout(epoch, remaining.min(WAIT_STEP));
+}
+
+/// Report a wait held past `STALL` for a write that is still to run: the
+/// first eight, then each power of two.
+fn report_held(segment: &Segment) {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    let count = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if count <= 8 || count.is_power_of_two() {
+        crate::diagnostics::log(&format!(
+            "GPU memory wait held past {}s for a write that is still to run (#{count}): address={:#x} op={} target={:#x} value={:#x}",
+            STALL.as_secs(),
+            segment.address,
+            segment.comparison.symbol(),
+            segment.target,
+            segment.word.value(),
+        ));
+    }
 }
 
 /// Report a released wait: the first eight, then each power of two.
@@ -1037,6 +1109,7 @@ pub(super) unsafe fn submit(
             release_val,
             segment,
             device: device.clone(),
+            queue: queue.native.as_raw().addr(),
             waits: pending.take_one(),
         };
         worker.sender.send(job).map_err(|_| E_FAIL)?;

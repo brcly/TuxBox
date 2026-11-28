@@ -340,6 +340,14 @@ impl Recording {
         self.written_ranges.record(address, bytes);
     }
 
+    /// Note a fence label write this list makes once a queue runs it. Until
+    /// then a queue waiting on the label holds for it.
+    pub(super) fn label_written(&mut self, address: u64, value: u64) {
+        self.labels.push(memory_wait::Label::write(address, value));
+        let list = self.label_writes.get_or_insert_with(Default::default);
+        memory_wait::note_recorded_write(list, address, value);
+    }
+
     pub(super) fn record_unknown_write(&mut self) {
         self.active.indirect.written();
         self.written_ranges.record_unknown();

@@ -233,6 +233,41 @@ void cross_queue(ID3D12Device* device) {
     expect_value(memory, readback, expected, "payload copied after the compute reply");
 }
 
+// A compute queue waits for a label whose write the title has recorded on the
+// direct queue and submits six seconds later. ProjectScarlett's frames do this:
+// the compute lists go first, the lists that write their labels with the rest
+// of the frame, and its first frame that traces rays takes that long. The wait
+// must hold for the recorded write. Released early, the compute queue runs
+// before what the direct queue was to give it.
+void cross_queue_late(ID3D12Device* device) {
+    constexpr size_t request = 0, reply = 8;
+    Memory memory(65536);
+    Queue compute(device, D3D12_COMMAND_LIST_TYPE_COMPUTE);
+    Queue direct(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+
+    direct.write64(memory.address(request), 5);
+    compute.wait64(memory.address(request), 5);
+    compute.write64(memory.address(reply), 6);
+    compute.submit();
+    // Longer than the provider holds a queue for a label nobody will write.
+    Sleep(6500);
+    const UINT64 early = memory.read64(reply);
+    direct.submit();
+    try {
+        direct.finish("direct queue writing the late label");
+        compute.finish("compute queue waiting on the late label");
+    } catch (const std::runtime_error&) {
+        // Let pending GPU work drain before its lists and title memory are released.
+        InterlockedExchange64(reinterpret_cast<volatile LONG64*>(memory.base + request), 5);
+        compute.finish("drain compute queue after failed wait");
+        throw;
+    }
+    if (early != 0)
+        throw std::runtime_error("the compute queue ran before the direct queue wrote the label it waits on");
+    expect_value(memory, request, 5, "late label");
+    expect_value(memory, reply, 6, "compute reply after the late label");
+}
+
 // The compute queue submits through ExecuteCommandListsX as well.
 void compute_frame(ID3D12Device* device) {
     Memory memory(65536);
@@ -3997,6 +4032,7 @@ struct Scenario {
 constexpr Scenario scenarios[] = {
     {L"labels", labels},
     {L"cross-queue", cross_queue},
+    {L"cross-queue-late", cross_queue_late},
     {L"compute-frame", compute_frame},
     {L"skipped-command", skipped_command},
     {L"copy-memory", copy_memory},
@@ -4086,7 +4122,7 @@ std::string narrow(const wchar_t* text) {
 }
 }
 
-const wchar_t* const selftest_scenarios[] = {L"labels",            L"cross-queue",      L"compute-frame",
+const wchar_t* const selftest_scenarios[] = {L"labels",            L"cross-queue",      L"cross-queue-late", L"compute-frame",
                                              L"skipped-command",   L"copy-memory",      L"direct-copy-wait", L"shared-texture",
                                              L"indirect-dispatch", L"gpu-indirect-dispatch", L"gpu-indirect-order",
                                              L"mesh-signature", L"mesh-signature-none",

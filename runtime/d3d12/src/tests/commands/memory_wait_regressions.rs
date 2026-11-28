@@ -314,6 +314,7 @@ fn pending_waits_and_job_drop_guards_never_leak_or_double_decrement() {
         release_val: 2,
         segment: segment.clone(),
         device: native_device.clone(),
+        queue: 0,
         waits: pending.take_one(),
     };
     let job_dropped_unprocessed = Job {
@@ -323,6 +324,7 @@ fn pending_waits_and_job_drop_guards_never_leak_or_double_decrement() {
         release_val: 4,
         segment,
         device: native_device,
+        queue: 0,
         waits: pending.take_one(),
     };
     drop(pending);
