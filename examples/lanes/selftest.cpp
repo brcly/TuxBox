@@ -2713,7 +2713,9 @@ void ray_tracing_guest_memory(ID3D12Device* device) {
     earlier.submit();
     earlier.finish("a copy of a structure that was built over after it was recorded");
     expect_value(label, 0, 23, "write after the copy of a replaced structure");
-    check(later_readback->Map(0, &range, reinterpret_cast<void**>(&mapped)), "map the later size report");
+    // The later report buffer holds 16 bytes; a read range past its end is invalid.
+    const D3D12_RANGE later_range{0, 8};
+    check(later_readback->Map(0, &later_range, reinterpret_cast<void**>(&mapped)), "map the later size report");
     const UINT64 kept = mapped[0];
     later_readback->Unmap(0, &empty);
     if (kept != original) throw std::runtime_error("the replaced structure was not copied" + sizes);
