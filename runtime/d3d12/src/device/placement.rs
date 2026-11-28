@@ -376,6 +376,7 @@ impl Texture {
         self: &Arc<Self>,
         changes: &mut Vec<upload::Change>,
         scratch: &mut Vec<u8>,
+        spares: &mut upload::ByteSpares,
     ) -> Result<()> {
         let mut contents = lock(&self.contents);
         // Mips without memory are left for the mapping that gives them some.
@@ -389,8 +390,7 @@ impl Texture {
             let digest = Digest::of(bytes);
             if contents.previous[level] != Some(digest) {
                 // Only a changed mip is copied out of the scratch buffer.
-                let mut owned = Vec::new();
-                owned.try_reserve_exact(bytes.len()).map_err(|_| E_OUTOFMEMORY)?;
+                let mut owned = spares.take(bytes.len())?;
                 owned.extend_from_slice(bytes);
                 changes.push(upload::Change {
                     texture: self.clone(),

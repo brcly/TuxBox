@@ -141,6 +141,32 @@ fn completed_uploads_lend_their_buffer_to_the_next_change() {
     assert_eq!(transfer.idle.len(), 1);
 }
 
+/// A video's planes change every frame. The bytes read for one change are
+/// lent to the next rather than allocated, and faulted in, again.
+#[test]
+fn a_changes_bytes_are_lent_to_the_next_change() {
+    const MIP: usize = 8 << 20;
+    let mut spares = super::ByteSpares::default();
+    let first = spares.take(MIP).unwrap();
+    assert!(first.is_empty() && first.capacity() >= MIP);
+    let at = first.as_ptr();
+    spares.put(first);
+    let again = spares.take(MIP).unwrap();
+    assert_eq!(again.as_ptr(), at);
+    spares.put(again);
+    // A small change leaves a much larger buffer for a large one.
+    assert!(spares.take(4096).unwrap().capacity() < MIP);
+    assert_eq!(spares.take(MIP).unwrap().as_ptr(), at);
+    for _ in 0..40 {
+        spares.put(Vec::with_capacity(MIP));
+    }
+    assert!(spares.kept() <= super::SPARE_BYTES);
+    for _ in 0..400 {
+        spares.put(Vec::with_capacity(16));
+    }
+    assert!(spares.count() <= super::SPARE_BUFFERS);
+}
+
 #[test]
 fn upload_buffers_round_up_to_shared_sizes() {
     assert_eq!(super::upload_capacity(1), Some(1 << 20));

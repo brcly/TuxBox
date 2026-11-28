@@ -74,6 +74,50 @@ fn upload_capacity(size: u64) -> Option<u64> {
     }
 }
 
+/// The most bytes, and buffers, kept from uploaded changes for later ones.
+const SPARE_BYTES: usize = 64 << 20;
+const SPARE_BUFFERS: usize = 64;
+
+/// Buffers that held a change's bytes, oldest first, for the next change.
+#[derive(Default)]
+pub(super) struct ByteSpares(Vec<Vec<u8>>);
+
+impl ByteSpares {
+    /// An empty buffer that holds `bytes` without growing: the smallest spare
+    /// that is not much larger, or a new one.
+    pub(super) fn take(&mut self, bytes: usize) -> Result<Vec<u8>> {
+        let most = bytes.saturating_mul(2).max(bytes.saturating_add(64 << 10));
+        let fits = (0..self.0.len())
+            .filter(|&i| (bytes..=most).contains(&self.0[i].capacity()))
+            .min_by_key(|&i| self.0[i].capacity());
+        if let Some(index) = fits {
+            return Ok(self.0.remove(index));
+        }
+        let mut buffer = Vec::new();
+        buffer.try_reserve_exact(bytes).map_err(|_| E_OUTOFMEMORY)?;
+        Ok(buffer)
+    }
+
+    pub(super) fn put(&mut self, mut buffer: Vec<u8>) {
+        buffer.clear();
+        if buffer.capacity() > SPARE_BYTES || self.0.try_reserve(1).is_err() {
+            return;
+        }
+        self.0.push(buffer);
+        while self.kept() > SPARE_BYTES || self.count() > SPARE_BUFFERS {
+            self.0.remove(0);
+        }
+    }
+
+    fn kept(&self) -> usize {
+        self.0.iter().map(Vec::capacity).sum()
+    }
+
+    fn count(&self) -> usize {
+        self.0.len()
+    }
+}
+
 /// Changed bytes that go into one upload. A title's first flush can change
 /// gigabytes, and each upload holds them twice: the bytes read from the title
 /// and the staging buffer they are detiled into.
@@ -91,6 +135,7 @@ pub(super) struct Transfer {
     pub(super) meter: Option<Meter>,
     // Kept between submissions so a steady stream of changes does not allocate.
     changes: Vec<Change>,
+    spares: ByteSpares,
     offsets: Vec<u64>,
     reader_waits: Vec<(ID3D12Fence, u64)>,
     #[cfg(test)]
@@ -113,6 +158,7 @@ impl Transfer {
             scratch: Vec::new(),
             meter: None,
             changes: Vec::new(),
+            spares: ByteSpares::default(),
             offsets: Vec::new(),
             reader_waits: Vec::new(),
             #[cfg(test)]
@@ -145,7 +191,7 @@ impl Transfer {
         let mut bytes = 0;
         for texture in textures {
             let found = changes.len();
-            texture.changed(&mut changes, &mut self.scratch)?;
+            texture.changed(&mut changes, &mut self.scratch, &mut self.spares)?;
             bytes += changes[found..].iter().map(|change: &Change| change.bytes.len()).sum::<usize>();
             // All of a texture's mips stay in one upload.
             if bytes >= BATCH_BYTES {
@@ -216,10 +262,13 @@ impl Transfer {
             return Err(error);
         }
         for change in changes.drain(..) {
-            let mut state = lock(&change.texture.contents);
-            state.previous[change.level] = Some(change.digest);
-            state.uploaded = tick;
-            state.readers.clear();
+            {
+                let mut state = lock(&change.texture.contents);
+                state.previous[change.level] = Some(change.digest);
+                state.uploaded = tick;
+                state.readers.clear();
+            }
+            self.spares.put(change.bytes);
         }
         Ok(())
     }
