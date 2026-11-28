@@ -5,6 +5,96 @@ fn serialize(words: &[u32]) -> Vec<u8> {
 }
 
 #[test]
+fn appended_heap_map_keeps_guest_bindings_and_sampler_words() {
+    for version in [1, 2] {
+        let mut words = vec![version, 3, 24, 1, 100, 0x400];
+        words.extend([0, 5, 60, 1, 0, 68, 3, 7, 80]);
+        words.extend([1, 100 + 52, 9, 8, 4, 6, 7]);
+        if version == 2 { words.push(2); }
+        while words.len() < 25 { words.push(0); }
+        words.extend([17; 13]);
+        words.extend([0, 3, 5, 6]);
+        if version == 2 { words.push(2); }
+        words.push(u32::MAX);
+        let original = serialize(&words);
+        let before = parse_rts0(&original).unwrap();
+        let bytes = append_heap_index_map(&original).unwrap();
+        assert_eq!(bytes, append_heap_index_map(&original).unwrap());
+        assert_eq!(&bytes[12..original.len()], &original[12..]);
+        let after = parse_rts0(&bytes).unwrap();
+        assert_eq!(after.version, 2); // 1.1 carries DATA_VOLATILE.
+        assert_eq!(format!("{:?}", before.params), format!("{:?}", &after.params[..3]));
+        assert_eq!(before.static_samplers, after.static_samplers);
+        assert_eq!(before.flags, after.flags);
+        assert_eq!(after.params[3].visibility, 0);
+        assert!(matches!(after.params[3].kind, RootParamKind::Descriptor { kind: 3, register: 0, space: 32766 }));
+        let [_, _, headers, ..] = super::words::<6>(&bytes).unwrap();
+        let [3, 0, descriptor] = super::words::<3>(&bytes[headers as usize + 36..]).unwrap() else { panic!("map header") };
+        assert_eq!(super::words::<3>(&bytes[descriptor as usize..]).unwrap(), [0, 32766, 2]);
+    }
+    assert!(append_heap_index_map(&[0; 4]).is_err());
+}
+
+#[test]
+fn heap_map_budget_includes_pixel_mirrors_and_every_parameter_kind() {
+    let data = serialize(&[2, 3, 24, 0, 0, 0x400,
+        0, 0, 60, 1, 0, 68, 3, 0, 80, 0, 0, 0, 0, 58, 0, 0, 2]);
+    let mut root = parse_rts0(&data).unwrap(); // 1 + 58 + 2 = 61 DWORDs
+    assert!(root.heap_index_map_fits(0));
+    assert!(root.heap_index_map_fits(1)); // 62 + 2 = 64
+    assert!(!root.heap_index_map_fits(2));
+    root.flags = 0;
+    assert!(!root.heap_index_map_fits(0));
+    root.flags = 0x400;
+    root.params[1].kind = RootParamKind::Constants { register: 0, space: 0, num32: u32::MAX };
+    assert!(!root.heap_index_map_fits(0));
+}
+
+#[test]
+fn index_map_requests_replace_only_the_root_and_keep_the_directory_order() {
+    // A one-parameter root, padded to an unaligned size: the root is first on
+    // disk and last in the directory, as in a title's mesh program.
+    let mut root = serialize(&[2, 1, 24, 0, 0, 0x400, 1, 0, 36, 7, 0, 4]);
+    root.push(0);
+    let code = serialize(&[0x000d_0065, 2, 0x4c49_5844]);
+    let mut request = Vec::from(*b"DXBC");
+    request.extend_from_slice(&[9; 16]);
+    request.extend(serialize(&[1, 0, 2, 0, 0]));
+    let root_at = request.len();
+    request.extend_from_slice(b"RTS0");
+    request.extend(serialize(&[root.len() as u32]));
+    request.extend_from_slice(&root);
+    request.extend_from_slice(&[0; 3]);
+    let code_at = request.len();
+    request.extend_from_slice(b"DXIL");
+    request.extend(serialize(&[code.len() as u32]));
+    request.extend_from_slice(&code);
+    let total = request.len() as u32;
+    request[24..28].copy_from_slice(&total.to_le_bytes());
+    request[32..36].copy_from_slice(&(code_at as u32).to_le_bytes());
+    request[36..40].copy_from_slice(&(root_at as u32).to_le_bytes());
+    crate::Dxbc::parse(&request).unwrap();
+
+    let mapped = with_index_map(&request).unwrap();
+    assert_eq!(mapped, with_index_map(&request).unwrap());
+    let parsed = crate::Dxbc::parse(&mapped).unwrap();
+    assert_eq!(parsed.digest, [0; 16]);
+    assert_eq!(parsed.total_size as usize, mapped.len());
+    let [dxil, rts0] = parsed.chunks.as_slice() else { panic!("expected two parts") };
+    assert_eq!((dxil.fourcc, rts0.fourcc), (*b"DXIL", *b"RTS0"));
+    assert_eq!(&mapped[dxil.offset..dxil.offset + dxil.size], &code[..]);
+    assert_eq!((dxil.offset - 8 - code_at) % 4, 0);
+    assert_eq!(&mapped[rts0.offset..rts0.offset + rts0.size], append_heap_index_map(&root).unwrap());
+    let signature = parse_rts0(&mapped[rts0.offset..rts0.offset + rts0.size]).unwrap();
+    assert!(matches!(signature.params[0].kind, RootParamKind::Constants { register: 7, space: 0, num32: 4 }));
+    assert!(matches!(signature.params[1].kind, RootParamKind::Descriptor { kind: 3, register: 0, space: 32766 }));
+
+    let mut rootless = request.clone();
+    rootless[28..32].copy_from_slice(&1u32.to_le_bytes());
+    assert!(with_index_map(&rootless).is_err());
+}
+
+#[test]
 fn texture_spans_resolve_append_and_keep_bindless_conservative() {
     let range = |range_type, num, offset_in_table| RootRange {
         range_type,

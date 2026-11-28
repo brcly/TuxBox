@@ -175,6 +175,19 @@ fn parse_rts0_with_limit(body: &[u8], mut remaining: usize) -> Result<RootSig, S
 }
 
 impl RootSig {
+    /// Whether a direct-indexed root can append the two-DWORD map after any
+    /// extra descriptor tables (for example mesh pipeline pixel mirrors).
+    pub fn heap_index_map_fits(&self, extra_tables: usize) -> bool {
+        let cost = self.params.iter().fold(extra_tables as u64, |cost, param| cost.saturating_add(
+            match param.kind {
+                RootParamKind::Table(_) => 1,
+                RootParamKind::Constants { num32, .. } => u64::from(num32),
+                RootParamKind::Descriptor { .. } => 2,
+            },
+        ));
+        self.flags & 0x400 != 0 && cost <= 62
+    }
+
     /// Finite ranges that can address textures from the CBV/SRV/UAV heap.
     /// Unbounded tables and direct resource heap indexing require the full heap.
     pub fn placed_texture_tables(&self) -> Option<Vec<(u32, std::ops::Range<u32>)>> {
@@ -207,6 +220,87 @@ impl RootSig {
         }
         Some(tables)
     }
+}
+
+/// Append TuxBox's resource heap index map without a platform serializer.
+/// Existing records retain their offsets and bytes. Version 1.0 records are
+/// copied to 1.1 records so the new SRV can carry DATA_VOLATILE; their implicit
+/// volatile range/descriptor semantics are preserved.
+pub fn append_heap_index_map(body: &[u8]) -> Result<Vec<u8>, String> {
+    parse_rts0(body)?;
+    let [version, count, offset, _, _, _] = words::<6>(body)?;
+    let mut out = body.to_vec();
+    while out.len() % 4 != 0 { out.push(0); }
+    let mut headers = section(body, offset, count, 12)?.to_vec();
+    if version == 1 {
+        for header in headers.chunks_exact_mut(12) {
+            let [tag, _, at] = words::<3>(header)?;
+            let record = match tag {
+                0 => {
+                    let [n, at] = words::<2>(section(body, at, 1, 8)?)?;
+                    let ranges_at = out.len() as u32;
+                    for row in section(body, at, n, 20)?.chunks_exact(20) {
+                        out.extend_from_slice(&row[..16]);
+                        let flags: u32 = if words::<1>(row)?[0] == 3 { 1 } else { 3 };
+                        out.extend_from_slice(&flags.to_le_bytes());
+                        out.extend_from_slice(&row[16..]);
+                    }
+                    Some([n, ranges_at].into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>())
+                }
+                2..=4 => {
+                    let mut record = section(body, at, 1, 8)?.to_vec();
+                    record.extend_from_slice(&2u32.to_le_bytes());
+                    Some(record)
+                }
+                _ => None,
+            };
+            if let Some(record) = record {
+                header[8..12].copy_from_slice(&(out.len() as u32).to_le_bytes());
+                out.extend(record);
+            }
+        }
+    }
+    let descriptor = out.len() as u32;
+    out.extend([0u32, 32766, 2].into_iter().flat_map(u32::to_le_bytes));
+    headers.extend([3u32, 0, descriptor].into_iter().flat_map(u32::to_le_bytes));
+    let headers_at = out.len() as u32;
+    out.extend(headers);
+    out[..4].copy_from_slice(&2u32.to_le_bytes());
+    out[4..8].copy_from_slice(&count.checked_add(1).ok_or("RTS0 parameter count overflow")?.to_le_bytes());
+    out[8..12].copy_from_slice(&headers_at.to_le_bytes());
+    Ok(out)
+}
+
+/// A program's translation request with the resource heap index map appended
+/// to the root it carries (see `append_heap_index_map`). It is derived from the
+/// request on the declared root rather than rebuilt, so that a tool can derive
+/// it byte for byte from the requests a launch recorded. Other parts keep their
+/// bytes and directory order, later parts move by a multiple of four bytes, and
+/// the digest is cleared, as when the runtime gives a program its pipeline root.
+pub fn with_index_map(request: &[u8]) -> Result<Vec<u8>, String> {
+    let dxbc = crate::Dxbc::parse(request)?;
+    let part = dxbc.chunk(b"RTS0").ok_or("the request carries no root signature")?;
+    let root = request.get(part.offset..part.offset + part.size).ok_or("truncated RTS0 part")?;
+    let mapped = append_heap_index_map(root)?;
+    let padding = (part.size % 4 + 4 - mapped.len() % 4) % 4;
+    let span = mapped.len() + padding;
+    let size = request.len() - part.size + span;
+    let total = u32::try_from(size).map_err(|_| "request too large")?;
+    let mut out = Vec::with_capacity(size);
+    out.extend_from_slice(&request[..part.offset - 4]);
+    out[4..20].fill(0);
+    out[24..28].copy_from_slice(&total.to_le_bytes());
+    for (index, other) in dxbc.chunks.iter().enumerate() {
+        if other.offset > part.offset {
+            let moved = (other.offset - 8 - part.size + span) as u32;
+            out[32 + 4 * index..36 + 4 * index].copy_from_slice(&moved.to_le_bytes());
+        }
+    }
+    out.extend_from_slice(&(mapped.len() as u32).to_le_bytes());
+    out.extend_from_slice(&mapped);
+    out.resize(part.offset + span, 0);
+    out.extend_from_slice(&request[part.offset + part.size..]);
+    Ok(out)
 }
 
 #[cfg(test)]
