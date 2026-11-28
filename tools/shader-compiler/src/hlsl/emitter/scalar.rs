@@ -145,7 +145,11 @@ impl<'a> Emitter<'a> {
                 let dh = hi(&d);
                 self.touch(&dh);
                 self.ws(&dh, &format!("t{t}h"))?;
-                self.line(&format!("scc = ((t{t}l | t{t}h) != 0u) ? 1u : 0u;"));
+                if self.wave_cull && m == "s_andn2_b64" {
+                    self.line(&format!("scc = ((t{t}l & 1u) != 0u) ? 1u : 0u;"));
+                } else {
+                    self.line(&format!("scc = ((t{t}l | t{t}h) != 0u) ? 1u : 0u;"));
+                }
                 if is_ps && m == "s_andn2_b64" && pixel_quad::guards_expansion(&self.insns, idx) {
                     self.line("#if __SHADER_TARGET_MAJOR >= 6");
                     self.line(&pixel_quad::vote(t, &format!("t{t}l")));

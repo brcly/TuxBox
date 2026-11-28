@@ -424,3 +424,33 @@ fn validate_launch_ignores_readlane_sgpr_destination_matching_lane_vgpr() {
     let body = disassemble(&isa);
     super::validate_launch(&body, 7, Opnd::Vgpr(2)).expect("v_readlane_b32 writes SGPR, not lane_index VGPR");
 }
+
+#[test]
+fn wave_cull_andn2_b64_sets_scc_from_lane_bit() {
+    let words = [
+        0x8a82_007eu32, // s_andn2_b64 s[2:3], exec, s[0:1]
+        0xbf81_0000,    // s_endpgm
+    ];
+    let isa: Vec<u8> = words.into_iter().flat_map(u32::to_le_bytes).collect();
+    let ex = heap_extract(&[], 0x800, &isa);
+    let insns = disassemble(&isa);
+
+    let mut cull = Emitter::new(&ex, insns.clone());
+    cull.wave_cull = true;
+    cull.hoist_wave_exchanges = true;
+    cull.emit_insn(0, &insns[0], false, None).unwrap();
+    assert!(
+        cull.body.contains("scc = ((t0l & 1u) != 0u) ? 1u : 0u;"),
+        "wave_cull s_andn2_b64 must test only bit 0 of the lane mask: {}",
+        cull.body
+    );
+
+    let mut plain = Emitter::new(&ex, insns.clone());
+    plain.wave_cull = false;
+    plain.emit_insn(0, &insns[0], false, None).unwrap();
+    assert!(
+        plain.body.contains("scc = ((t0l | t0h) != 0u) ? 1u : 0u;"),
+        "non-wave_cull s_andn2_b64 must keep full 64-bit scc test: {}",
+        plain.body
+    );
+}
