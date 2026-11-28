@@ -14,19 +14,62 @@ use std::sync::{Condvar, LazyLock, Mutex};
 const LARGE_BYTES: usize = 512 << 10;
 const DEFAULT_SLOTS: usize = 4;
 
-/// `TUXBOX_LARGE_COMPILES`: how many large compiles may run at once. `0`
-/// removes the limit.
+/// Leave room for the running title, and conservatively budget 2 GiB for
+/// each large driver compile (measured allocations have been around 1 GiB).
+const GIB: u64 = 1 << 30;
+const RESERVED_BYTES: u64 = 2 * GIB;
+const BYTES_PER_COMPILE: u64 = 2 * GIB;
+
+/// `TUXBOX_LARGE_COMPILES` overrides the memory-based policy. `0` is unlimited.
 static LARGE: LazyLock<Gate> = LazyLock::new(|| {
-    Gate::new(parse_slots(std::env::var("TUXBOX_LARGE_COMPILES").ok().as_deref()))
+    let value = std::env::var("TUXBOX_LARGE_COMPILES").ok();
+    Gate::with_limit(parse_slots(value.as_deref())
+        .map_or(Limit::Adaptive(available_memory), Limit::Fixed))
 });
 
-fn parse_slots(value: Option<&str>) -> usize {
-    value.and_then(|text| text.trim().parse().ok()).unwrap_or(DEFAULT_SLOTS)
+fn parse_slots(value: Option<&str>) -> Option<usize> {
+    value.and_then(|text| text.trim().parse().ok())
+}
+
+#[cfg(windows)]
+fn available_memory() -> Option<u64> {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut status = MEMORYSTATUSEX {
+        dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: the initialized structure is writable for the duration of the call.
+    unsafe { GlobalMemoryStatusEx(&mut status) }.ok()?;
+    Some(status.ullAvailPhys.min(status.ullAvailPageFile))
+}
+
+#[cfg(not(windows))]
+fn available_memory() -> Option<u64> { None }
+
+fn memory_slots(available: Option<u64>) -> usize {
+    available.map_or(DEFAULT_SLOTS, |bytes| {
+        // Always allow one compile to make progress, even under pressure.
+        (bytes.saturating_sub(RESERVED_BYTES) / BYTES_PER_COMPILE)
+            .clamp(1, DEFAULT_SLOTS as u64) as usize
+    })
+}
+
+enum Limit {
+    Fixed(usize),
+    Adaptive(fn() -> Option<u64>),
+}
+
+impl Limit {
+    fn slots(&self) -> usize {
+        match self {
+            Self::Fixed(slots) => *slots,
+            Self::Adaptive(available) => memory_slots(available()),
+        }
+    }
 }
 
 pub(crate) struct Gate {
-    /// Zero means unlimited.
-    slots: usize,
+    limit: Limit,
     running: Mutex<usize>,
     freed: Condvar,
 }
@@ -35,18 +78,27 @@ pub(crate) struct Gate {
 pub(crate) struct Slot<'a>(&'a Gate);
 
 impl Gate {
+    #[cfg(test)]
     fn new(slots: usize) -> Self {
-        Self { slots, running: Mutex::new(0), freed: Condvar::new() }
+        Self::with_limit(Limit::Fixed(slots))
+    }
+
+    fn with_limit(limit: Limit) -> Self {
+        Self { limit, running: Mutex::new(0), freed: Condvar::new() }
     }
 
     /// Block until a slot is free. `waiting` is called once, with the slot
     /// count, if the caller has to wait.
     fn acquire(&self, waiting: impl FnOnce(usize)) -> Slot<'_> {
         let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
-        if self.slots != 0 && *running >= self.slots {
-            waiting(self.slots);
-            while *running >= self.slots {
+        let mut slots = self.limit.slots();
+        if slots != 0 && *running >= slots {
+            waiting(slots);
+            while slots != 0 && *running >= slots {
                 running = self.freed.wait(running).unwrap_or_else(|e| e.into_inner());
+                // Re-evaluate only after a running compile completes. The
+                // minimum of one ensures that memory pressure cannot deadlock.
+                slots = self.limit.slots();
             }
         }
         *running += 1;
@@ -57,7 +109,13 @@ impl Gate {
 impl Drop for Slot<'_> {
     fn drop(&mut self) {
         *self.0.running.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
-        self.0.freed.notify_one();
+        // An adaptive budget can grow by more than one slot when memory
+        // becomes available. Wake every waiter so the new capacity can be
+        // used; the mutex and admission predicate still enforce the limit.
+        match &self.0.limit {
+            Limit::Adaptive(_) => self.0.freed.notify_all(),
+            Limit::Fixed(_) => self.0.freed.notify_one(),
+        }
     }
 }
 
