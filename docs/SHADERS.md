@@ -192,7 +192,7 @@ A change to either translation shows in a [recorded set of outputs](../tools/sha
 
 ### Earlier survey
 
-Shader preparation reports only how many recorded requests xshader refused. `tools/triage_scarlett_shaders.py` runs the HLSL emitter on each recorded request in the prefix's `projectscarlett/<exe sha256>/requests` directory. It groups the refusal messages with program counters and register numbers masked. It does not run DXC and does not write to the cache. On 9,102 requests recorded through player selection, xshader translated 4,383 and refused 4,719. The largest groups were `s_load` with a dynamic SOFFSET (29%), sampler descriptors resolved from an inline word (19%), and wave reductions in divergent control flow (13%).
+Shader preparation reports only how many recorded requests xshader refused. `tools/triage_scarlett_shaders.py` runs the HLSL emitter on each recorded request in the prefix's `projectscarlett/<exe sha256>/requests` directory. It groups the refusal messages with program counters and register numbers masked, and excludes refused requests whose program translated via a sibling request (the provider tries several roots for one pipeline, so a refusal is often a discarded attempt rather than a lost program). It does not run DXC and does not write to the cache. On 9,102 requests recorded through player selection, xshader translated 4,383 and refused 4,719. The largest groups were `s_load` with a dynamic SOFFSET (29%), sampler descriptors resolved from an inline word (19%), and wave reductions in divergent control flow (13%).
 
 ## Reusing compiled shaders during play
 

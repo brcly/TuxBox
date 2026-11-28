@@ -136,6 +136,20 @@ python tools/rank_pipeline_failures.py "$PREFIX/drive_c/users/steamuser/AppData/
 
 The files stay on your machine. The printed ranking holds no paths or shader data.
 
+To see the refusals that actually block pipelines — separated from driver
+deadlines, driver failures and stand-ins, and ranked by pipelines rather than
+by request count — use the refusal-impact ranking. It separates expected-at-
+preparation refusals (`mesh_root_layout`) from actionable ones, adds fixed
+buckets for the named emitter refusals (including mixed lane `ds_write2_b32`
+and `s_setpc_b64`, `v_readlane_b32` inside non-uniform loops, buffer record
+counts with no host buffer, BVH traversal, half-float PS attribute reads,
+backward permute in scalar branches and mesh wave exchange inside a loop), and
+prints the non-refusal remainder for reference:
+
+```sh
+python tools/refusal_impact.py "$PREFIX/drive_c/users/steamuser/AppData/Local/Temp/tuxbox_shader_cache"
+```
+
 The ranking uses explicit missing request keys when the run has lookup
 telemetry, not raw shader digests from older compiler versions. A stage with
 both successful and unresolved lookup attempts is ambiguous, not a proven

@@ -8,9 +8,26 @@ from tempfile import TemporaryDirectory
 import unittest
 import unittest.mock
 
-from tools.triage_scarlett_shaders import command, construct, main, normalize, probe, requests, triage_log
+from tools.triage_scarlett_shaders import command, construct, main, normalize, probe, requests, sibling_key, triage_log, triage
 
 KEY = "ab" * 32
+
+def make_dxbc(body, trailer):
+    import struct
+    part_offset = 36
+    body_offset = part_offset + 8
+    total = body_offset + len(body)
+    data = bytearray(total)
+    data[:4] = b"DXBC"
+    data[24:28] = struct.pack("<I", total)
+    data[28:32] = struct.pack("<I", 1)
+    data[32:36] = struct.pack("<I", part_offset)
+    data[36:40] = b"DXIL"
+    data[40:44] = struct.pack("<I", len(body))
+    data[44:44 + len(body)] = body
+    return bytes(data) + trailer
+
+
 
 
 @unittest.skipUnless(sys.platform == "linux", "The fake compiler is a POSIX shell script")
@@ -150,6 +167,86 @@ class TriageScarlettShaders(unittest.TestCase):
         self.assertIn("Observed refusals: 4 distinct keys, 5 log events.", stdout.getvalue())
         self.assertIn("Not a coverage estimate", stdout.getvalue())
         self.assertEqual(json.loads(output.read_text())["totals"], report["totals"])
+
+    def test_program_refused_only_when_no_sibling_translates(self):
+        import hashlib
+        dxil = b"SAME_PROGRAM"
+
+        sibling_a = make_dxbc(dxil, b"\x00")
+        sibling_b = make_dxbc(dxil, b"\x01")
+        other = make_dxbc(b"OTHER_PROGRAM", b"\x00")
+        keys = [hashlib.sha256(blob).hexdigest() for blob in (sibling_a, sibling_b, other)]
+        for key, blob in zip(keys, (sibling_a, sibling_b, other)):
+            (self.cache / (key + ".dxbc")).write_bytes(blob)
+        self.assertEqual(sibling_key(self.cache / (keys[0] + ".dxbc")),
+                         sibling_key(self.cache / (keys[1] + ".dxbc")))
+        self.assertNotEqual(sibling_key(self.cache / (keys[0] + ".dxbc")),
+                            sibling_key(self.cache / (keys[2] + ".dxbc")))
+        fake = self.root / "xshader"
+        fake.write_text(
+            "#!/bin/sh\n"
+            'case "$(cat "$1" | md5sum | cut -d" " -f1)" in\n'
+            '  "$MD5_A") exit 0;;\n'
+            '  *) echo "s_load at 0xec: dynamic soffset unsupported" >&2; exit 65;;\n'
+            'esac\n'.replace("$MD5_A", hashlib.md5(sibling_a).hexdigest()))
+        fake.chmod(0o755)
+        report = triage(str(fake), requests(self.cache), 2, 1, 3)
+        self.assertEqual(report["totals"], {"requests": 3, "translated": 1, "refused": 1, "failed": 0})
+        self.assertEqual(report["discarded_requests"], 1)
+        self.assertEqual(report["reasons"], [{"reason": "s_load at 0x_: dynamic soffset unsupported",
+                                              "count": 1,
+                                              "examples": [keys[2] + ".dxbc"]}])
+        self.assertEqual(report["constructs"], [{"construct": "s_load", "count": 1}])
+
+    def test_other_request_kinds_are_not_siblings(self):
+        import hashlib
+
+        producer_dxil = b"SHARED_PRODUCER"
+        pixel_dxil = b"SHARED_PIXEL"
+        dxbc_a = make_dxbc(producer_dxil, b"\x00")
+        link_a_producer = make_dxbc(producer_dxil, b"\x01")
+        link_b_producer = make_dxbc(producer_dxil, b"\x02")
+        pixel = make_dxbc(pixel_dxil, b"\x00")
+
+        key_a = hashlib.sha256(dxbc_a).hexdigest()
+        (self.cache / (key_a + ".dxbc")).write_bytes(dxbc_a)
+
+        def make_link(name, producer):
+            link = self.cache / (name + ".link")
+            link.mkdir()
+            (link / "producer.dxbc").write_bytes(producer)
+            (link / "pixel.dxbc").write_bytes(pixel)
+            (link / "pixel.cso").write_bytes(b"")
+            return link
+
+        link_a = make_link("1" * 64 + "_" + "2" * 64 + "_" + "3" * 64, link_a_producer)
+        link_b = make_link("4" * 64 + "_" + "2" * 64 + "_" + "3" * 64, link_b_producer)
+        key_root = hashlib.sha256(link_a_producer).hexdigest()
+        (self.cache / (key_a + "_w32.wave32")).write_bytes(make_dxbc(producer_dxil, b"\x03"))
+        (self.cache / (key_a + "_rt1.stencil")).write_bytes(make_dxbc(producer_dxil, b"\x04"))
+
+        dxbc_key = sibling_key(self.cache / (key_a + ".dxbc"))
+        self.assertNotEqual(sibling_key(link_a), dxbc_key)
+        self.assertEqual(sibling_key(link_a), sibling_key(link_b))
+        self.assertNotEqual(sibling_key(link_a)[2], "-")
+        self.assertNotEqual(sibling_key(self.cache / (key_a + "_w32.wave32")), dxbc_key)
+        self.assertNotEqual(sibling_key(self.cache / (key_a + "_rt1.stencil")), dxbc_key)
+
+        fake = self.root / "xshader"
+        fake.write_text(
+            "#!/bin/sh\n"
+            'case "$(cat "$1" | md5sum | cut -d" " -f1)" in\n'
+            '  "$MD5_A"|"$MD5_B") exit 0;;\n'
+            '  *) echo "s_load at 0xec: dynamic soffset unsupported" >&2; exit 65;;\n'
+            'esac\n'.replace("$MD5_A", hashlib.md5(dxbc_a).hexdigest())
+            .replace("$MD5_B", hashlib.md5(link_b_producer).hexdigest()))
+        fake.chmod(0o755)
+        report = triage(str(fake), requests(self.cache), 2, 1, 3)
+        self.assertEqual(report["totals"], {"requests": 5, "translated": 2, "refused": 2, "failed": 0})
+        # Only the refused link whose root-sibling translated is discarded.
+        self.assertEqual(report["discarded_requests"], 1)
+        self.assertEqual(report["reasons"][0]["count"], 2)
+        self.assertNotIn(link_a.name, [e for row in report["reasons"] for e in row["examples"]])
 
     def test_log_uses_the_last_observed_refusal(self):
         lines = [f"Xbox shader {KEY}: xshader failed (65): first reason",
