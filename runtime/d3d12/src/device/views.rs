@@ -8,8 +8,8 @@ use mirrors::srv_mirror;
 pub(super) use addressed::AddressSrv;
 use addressed::buffer_at;
 #[cfg(test)]
-use addressed::earlier_page;
-pub(crate) use addressed::{command_buffer_address, command_buffer_address_flags};
+use addressed::{earlier_page, root_view_window};
+pub(crate) use addressed::{command_buffer_address, command_buffer_address_flags, root_view_address};
 pub(crate) use addressed::LinearResource;
 pub(crate) use addressed::linear_resource;
 use addressed::rebase_view;
@@ -130,6 +130,67 @@ fn desktop_cbv_bytes(guest: u32) -> u32 {
         guest.next_multiple_of(D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT)
     } else {
         guest
+    }
+}
+
+/// Buffers imported for commands that address guest memory directly, such as
+/// fence labels and root views. A list keeps only the native buffer, so without
+/// this the import's registry entry dies with the command, and the next command
+/// at that address imports the pages again: a root view imports megabytes, and
+/// where section-backed pages are mirrored each import is a separate copy.
+/// Only imports whose pages stay mapped while they live are kept: a host copy,
+/// or title pages under an xmem hold. An import of other title memory, such as
+/// the title's own VirtualAlloc, would outlive memory the title may release:
+/// every later submission on the device, the driver's own included, would name
+/// the freed pages, and the kernel refuses those.
+pub(crate) struct CommandImports<T = TextureAddress> {
+    /// Imports by their last use; the smallest stamp is the least recent.
+    by_use: std::collections::BTreeMap<u64, std::sync::Arc<T>>,
+    /// The last-use stamp of each kept import, by address.
+    stamps: std::collections::HashMap<usize, u64>,
+    next: u64,
+}
+
+impl<T> Default for CommandImports<T> {
+    fn default() -> Self {
+        Self { by_use: Default::default(), stamps: Default::default(), next: 0 }
+    }
+}
+
+/// An import `CommandImports` may keep.
+pub(crate) trait HeldPages {
+    /// Whether the pages the import reads stay mapped while it lives.
+    fn pages_held(&self) -> bool;
+}
+
+impl HeldPages for TextureAddress {
+    fn pages_held(&self) -> bool {
+        self.buffer_heap.as_ref().is_some_and(|heap| heap.pages_held())
+    }
+}
+
+impl<T: HeldPages> CommandImports<T> {
+    /// Imports kept at most; the least recently used is released first, so a
+    /// label page that every frame writes and waits on stays.
+    const LIMIT: usize = 1024;
+
+    pub(crate) fn keep(&mut self, entry: &std::sync::Arc<T>) {
+        if !entry.pages_held() {
+            return;
+        }
+        self.next += 1;
+        let key = std::sync::Arc::as_ptr(entry).addr();
+        let kept = self
+            .stamps
+            .insert(key, self.next)
+            .and_then(|old| self.by_use.remove(&old))
+            .unwrap_or_else(|| entry.clone());
+        self.by_use.insert(self.next, kept);
+        while self.by_use.len() > Self::LIMIT {
+            if let Some((_, old)) = self.by_use.pop_first() {
+                self.stamps.remove(&std::sync::Arc::as_ptr(&old).addr());
+            }
+        }
     }
 }
 

@@ -29,6 +29,10 @@ pub(super) struct DxgiDevice {
     pub(super) view_strides: std::sync::Arc<super::placement::DescriptorMap<u32>>,
     pub(super) byte_offset_views: OnceLock<super::views::AddressViews>,
     pub(super) texture_addresses: std::sync::Arc<super::placement::Views<super::views::TextureAddress>>,
+    /// Buffers imported for commands that address guest memory directly, kept
+    /// so the next command at that address reaches the same import (see
+    /// `views::CommandImports`).
+    pub(super) command_imports: std::sync::Mutex<super::views::CommandImports>,
     pub(super) blas: super::blas::Buffers,
     pub(super) media: super::media::Sources,
     pub(super) placements: super::placement::Placements,
@@ -68,6 +72,7 @@ impl DxgiDevice {
             imported_views: Default::default(),
             view_strides: Default::default(),
             texture_addresses: Default::default(),
+            command_imports: Default::default(),
             byte_offset_views: Default::default(),
             emulate_stencil: Default::default(),
             packed_uav_native: Default::default(),

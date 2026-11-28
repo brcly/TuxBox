@@ -33,6 +33,9 @@ pub(in super::super) struct ImportedHeap {
     pub(super) _pin: ImportPin,
     // The host memory the heap was imported from (or mirrors).
     memory: u64,
+    // The pages the GPU reads stay mapped while the heap lives: a host copy of
+    // them (see `shadowed`), or title pages under an xmem hold.
+    held: bool,
 }
 
 impl ImportedHeap {
@@ -41,10 +44,15 @@ impl ImportedHeap {
         pin: ImportPin,
         backing: super::backing::Backing,
     ) -> windows::core::Result<Self> {
+        let held = backing.hold.is_some();
         if let Some(guard) = BackingGuard::new(None, backing.hold) {
             attach_heap_guard(&native, &guard)?;
         }
-        Ok(Self { native, piece_heaps: Vec::new(), _pin: pin, memory: backing.address })
+        Ok(Self { native, piece_heaps: Vec::new(), _pin: pin, memory: backing.address, held })
+    }
+
+    pub(in super::super) fn pages_held(&self) -> bool {
+        self.held
     }
 
     pub(super) fn shadowed(
@@ -56,7 +64,7 @@ impl ImportedHeap {
         if let Some(guard) = BackingGuard::new(Some(shadow), backing.hold) {
             attach_heap_guard(&native, &guard)?;
         }
-        Ok(Self { native, piece_heaps: Vec::new(), _pin: pin, memory: backing.address })
+        Ok(Self { native, piece_heaps: Vec::new(), _pin: pin, memory: backing.address, held: true })
     }
 
     pub(super) fn scattered(
@@ -69,6 +77,8 @@ impl ImportedHeap {
             piece_heaps,
             _pin: pin,
             memory: 0,
+            // Its pieces are opened under the buffer's xmem hold.
+            held: true,
         }
     }
 

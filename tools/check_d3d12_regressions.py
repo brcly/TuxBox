@@ -28,6 +28,7 @@ LAYER_BUILD = Lock()
 CASES = {
     "root-cbv-window": ("d3d12-root-cbv-window", (), "d3d12-root-cbv-window", ("words=120/120","window=65536","offsets=0,256,65280,65536,65792")),
     "root-cbv-offsets": ("d3d12-root-cbv-window", ("--offsets",), "d3d12-root-cbv-offsets", ("offsets=17/17","step=16","words=408/408")),
+    "root-srv-reach": ("d3d12-root-srv-reach", (), "d3d12-root-srv-reach", ("words=20/20","offsets=0,65280,65536,81920,1048576")),
     "tables": ("d3d12-tables", (), "d3d12-tables", ("words=16/16", "placed-srv=16/16")),
     "heaps": ("d3d12-heaps", (), "d3d12-heaps", ("words=256/256", "volume=45/45")),
     "alias-deferred": ("d3d12-copy-resource", ("--alias-deferred",), "d3d12-alias-deferred", ("overlaps=2", "old=verified", "refreshed=verified", "no_cpu_wait=1")),

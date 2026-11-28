@@ -115,6 +115,16 @@ impl<T> Views<T> {
         lock(&self.0).range(..=address).next_back()?.1.upgrade()
     }
 
+    /// Up to `limit` live entries at or below `address`, nearest first.
+    pub(crate) fn preceding_entries(&self, address: usize, limit: usize) -> Vec<Arc<T>> {
+        lock(&self.0)
+            .range(..=address)
+            .rev()
+            .filter_map(|(_, entry)| entry.upgrade())
+            .take(limit)
+            .collect()
+    }
+
     pub(crate) fn remove_if(&self, handle: usize, value: *const T) {
         let mut entries = lock(&self.0);
         if entries.get(&handle).is_some_and(|entry| entry.as_ptr() == value) {

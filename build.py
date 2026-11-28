@@ -305,6 +305,7 @@ def build_target(tools, target, dxc, d3d12_reference=None):
             ("affine", "accumulate", "cs_6_0", "affine_accumulate", "accumulate_dxil"),
             ("table", "main", "cs_6_0", "table", "table_dxil"),
             ("root_cbv", "main", "cs_6_0", "root_cbv", "root_cbv_dxil"),
+            ("root_srv", "main", "cs_6_0", "root_srv", "root_srv_dxil"),
             ("triangle", "VSMain", "vs_6_0", "triangle_vs", "triangle_vs"),
             ("triangle", "VSFromBuffer", "vs_6_0", "triangle_input_vs", "triangle_input_vs"),
             ("triangle", "PSMain", "ps_6_0", "triangle_ps", "triangle_ps"),
@@ -322,7 +323,8 @@ def build_target(tools, target, dxc, d3d12_reference=None):
         for name, source in (("tables", "table_guest.cpp"), ("indirect", "indirect_guest.cpp"),
                              ("address-uav", "address_uav_guest.cpp"),
                              ("draw", "graphics_guest.cpp"), ("mesh", "mesh_guest.cpp"),
-                             ("null-usage", "null_usage_guest.cpp"), ("root-cbv-window", "root_cbv_guest.cpp")):
+                             ("null-usage", "null_usage_guest.cpp"), ("root-cbv-window", "root_cbv_guest.cpp"),
+                             ("root-srv-reach", "root_srv_guest.cpp")):
             obj = tools.compile(src / source, out, "/W4", "/WX", f"/I{out}")
             tools.link(out / f"d3d12-{name}.exe", obj, "d3d12_xs.lib", "dxgi.lib", "kernel32.lib")
         guest = tools.compile(src / "guest.cpp", out, f"/I{out}")

@@ -1,4 +1,5 @@
-use super::{default_texture_uav_desc, desktop_cbv_bytes, earlier_page};
+use super::{default_texture_uav_desc, desktop_cbv_bytes, earlier_page, root_view_window, CommandImports, HeldPages};
+use std::sync::Arc;
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R16_UINT, DXGI_FORMAT_R32_UINT};
 
@@ -13,6 +14,93 @@ fn an_earlier_page_puts_a_view_on_a_whole_element() {
     // No page boundary can fix an offset the stride's page factor rules out.
     assert_eq!(earlier_page(0xaa8f_0162, 20, 0), None);
     assert_eq!(earlier_page(0x2_0028, 20, 0), Some(0x2_0000));
+}
+
+#[test]
+fn a_root_view_maps_up_to_its_reach_of_committed_memory() {
+    const MIB: u64 = 1 << 20;
+    let base = 0x1_0000_0000;
+    // The root-srv-reach control: 0x4480 into an allocation with 2 MiB after
+    // it, committed in 4 KiB pages. The import is every whole page of the run.
+    assert_eq!(root_view_window(base + 0x4480, base, base + 0x20_5000, |_| unreachable!()), Some((base, 2 * MIB)));
+    // Inside a larger run the import starts at the 4 MiB boundary below the
+    // address and spans 8 MiB, so the bindings after it reuse it.
+    let address = base + 0x123_4560;
+    let committed = |at| {
+        assert_eq!(at, base + 16 * MIB);
+        Some(base + 64 * MIB)
+    };
+    assert_eq!(root_view_window(address, base, base + 64 * MIB, committed), Some((base + 16 * MIB, 8 * MIB)));
+    // Memory between that boundary and the address that is not committed
+    // moves the start to the address's own page.
+    assert_eq!(root_view_window(address, base, base + 64 * MIB, |_| None), Some((base + 0x123_0000, 8 * MIB)));
+    assert_eq!(root_view_window(address, base, base + 64 * MIB, |_| Some(base + 0x110_0000)), Some((base + 0x123_0000, 8 * MIB)));
+    // An allocation that begins above the boundary: the import starts with it.
+    let allocation = base + 3 * MIB;
+    assert_eq!(root_view_window(allocation + 0x2_0010, allocation, allocation + 16 * MIB, |_| Some(allocation + 16 * MIB)),
+        Some((allocation, 8 * MIB)));
+    // The import ends at the last whole page of the run, and an address in a
+    // partial page after it has no window.
+    assert_eq!(root_view_window(base + 0x4480, base, base + 0x1_8000, |_| unreachable!()), Some((base, 0x1_0000)));
+    assert_eq!(root_view_window(base + 0x1_4480, base, base + 0x1_8000, |_| Some(base + 0x1_8000)), None);
+}
+
+struct Pages(bool);
+
+impl HeldPages for Pages {
+    fn pages_held(&self) -> bool {
+        self.0
+    }
+}
+
+#[test]
+fn command_imports_keep_only_imports_whose_pages_stay_mapped() {
+    let mut kept = CommandImports::<Pages>::default();
+    let title = Arc::new(Pages(false));
+    kept.keep(&title);
+    assert_eq!(Arc::strong_count(&title), 1);
+    let held = Arc::new(Pages(true));
+    kept.keep(&held);
+    kept.keep(&held);
+    assert_eq!(Arc::strong_count(&held), 2);
+}
+
+#[test]
+fn command_imports_release_the_least_recently_used_first() {
+    let mut kept = CommandImports::<Pages>::default();
+    let (first, second) = (Arc::new(Pages(true)), Arc::new(Pages(true)));
+    kept.keep(&first);
+    kept.keep(&second);
+    let others: Vec<_> = (2..CommandImports::<Pages>::LIMIT).map(|_| Arc::new(Pages(true))).collect();
+    for other in &others {
+        kept.keep(other);
+    }
+    // Full. Using `first` again leaves `second` the least recent.
+    kept.keep(&first);
+    let newest = Arc::new(Pages(true));
+    kept.keep(&newest);
+    assert_eq!(Arc::strong_count(&first), 2);
+    assert_eq!(Arc::strong_count(&second), 1);
+    assert_eq!(Arc::strong_count(&newest), 2);
+    assert!(others.iter().all(|other| Arc::strong_count(other) == 2));
+}
+
+#[test]
+fn preceding_entries_look_past_released_ones() {
+    let views = super::super::placement::Views::<u32>::default();
+    let live: Vec<_> = (0..4).map(Arc::new).collect();
+    for (i, entry) in live.iter().enumerate() {
+        views.set(0x1000 * (i + 1), Some(entry));
+    }
+    let released = Arc::new(9);
+    views.set(0x3800, Some(&released));
+    drop(released);
+    // The nearest entry alone is the released one.
+    assert!(views.preceding(0x3900).is_none());
+    let found = |address, limit| views.preceding_entries(address, limit).iter().map(|entry| **entry).collect::<Vec<_>>();
+    assert_eq!(found(0x3900, 8), [2, 1, 0]);
+    assert_eq!(found(0x4000, 2), [3, 2]);
+    assert!(found(0xfff, 8).is_empty());
 }
 
 #[test]
