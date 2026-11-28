@@ -62,6 +62,7 @@ The game also imports Windows core API sets for services such as files, timing a
 | `unwritten-descriptors` | A heap whose title memory held leftover bytes, bound as a table whose root declares slots the title never writes. The dispatch must run and store its word. |
 | `xbox-shader` | A console shader's pipeline and dispatch ([shader cache](#shader-cache)) |
 | `bindless-raw-copy` | A view the title copies into the heap with ordinary stores, from a CPU heap, replaces the one a direct-indexed program stores through ([compute roots](#compute-roots)); not part of `all` |
+| `bindless-raw-copy-reused` | The same when the title writes another view into the CPU heap slot it copied from before it submits: the copy keeps the view it was given; not part of `all` |
 | `bindless-compute`, `bindless-sampler` | Direct-indexed console compute programs through the paged resource index map ([compute roots](#compute-roots)); not part of `all` |
 | `bindless-table-store` | A program under a direct-indexed root that stores through one descriptor table slot: that texture is published, and another UAV texture elsewhere in the heap keeps the title's memory ([compute roots](#compute-roots)); not part of `all` |
 | `bindless-heap-read`, `bindless-texture-store` | A guest texture with a UAV in the heap of a direct-indexed program. A program with no image write must leave the texture's title memory alone, and a store to it must be published ([compute roots](#compute-roots)); not part of `all` |

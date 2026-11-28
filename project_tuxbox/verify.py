@@ -533,7 +533,8 @@ def lanes_bindless_compute(host, check, gpu_args, pci, memory_symbols):
                                           ("bindless-texture-store", bindless_texture_store_shader),
                                           ("bindless-table-store", bindless_table_store_shader),
                                           ("bindless-table-compute", partial(bindless_compute_shader, table=True)),
-                                          ("bindless-raw-copy", bindless_compute_shader))
+                                          ("bindless-raw-copy", bindless_compute_shader),
+                                          ("bindless-raw-copy-reused", bindless_compute_shader))
                   for kind, limit in (("wide", "1000000"), ("constrained", "64"))]
         for scenario, original, kind, limit in trials:
             messages = []
@@ -1559,6 +1560,8 @@ GATE_LABELS = {
     "lanes-bindless-table-store-constrained": "The same with fewer resident descriptors than the indices in use",
     "lanes-bindless-raw-copy-wide": "A direct-indexed store through a view the title copied into the heap with ordinary stores",
     "lanes-bindless-raw-copy-constrained": "The same with fewer resident descriptors than the index it uses",
+    "lanes-bindless-raw-copy-reused-wide": "The same after the title writes another view into the CPU heap slot it copied from",
+    "lanes-bindless-raw-copy-reused-constrained": "The same with fewer resident descriptors than the index it uses",
     "lanes-package-replay": "Lanes gameplay replay (earlier guest with desktop graphics)", "cpu-replay": "8,388,608-move CPU replay",
 }
 

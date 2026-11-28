@@ -3660,7 +3660,10 @@ void bindless_table_compute(ID3D12Device* device) { bindless_compute_with(device
 // replaces the view at that index. ProjectScarlett fills slots of its 38 MiB
 // heap this way. The slot first holds a view of another window, written
 // through the API. The direct-indexed program must store through the copy.
-void bindless_raw_copy(ID3D12Device* device) {
+// With `reuse`, the title then writes another view into the CPU heap slot it
+// copied from before submitting, as ProjectScarlett reuses its CPU heap: the
+// copy still holds the view it was given.
+void bindless_raw_copy_with(ID3D12Device* device, bool reuse) {
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC signature{};
     signature.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
     signature.Desc_1_1 = {0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED};
@@ -3675,7 +3678,7 @@ void bindless_raw_copy(ID3D12Device* device) {
     ComPtr<ID3D12PipelineState> pipeline;
     check(method<CreateComputePipeline>(device, device_create_compute)(device, &shader, 0, nullptr,
           IID_PPV_ARGS(&pipeline)), "create translated raw-copy pipeline");
-    constexpr UINT windows = 8, window_words = 64, decoy = 0xD0000000, stale = 5;
+    constexpr UINT windows = 8, window_words = 64, decoy = 0xD0000000, stale = 5, later = 6;
     constexpr UINT64 bytes = windows * window_words * sizeof(UINT);
     std::vector<UINT> words(windows * window_words);
     for (UINT i = 0; i < windows; ++i) words[i * window_words] = decoy | i;
@@ -3705,6 +3708,7 @@ void bindless_raw_copy(ID3D12Device* device) {
     window_view(stale, slot);
     window_view(0, source);
     std::memcpy(reinterpret_cast<void*>(slot), reinterpret_cast<const void*>(source), stride);
+    if (reuse) window_view(later, source);
     Queue direct(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
     auto list = direct.list.Get();
     list->CopyBufferRegion(output.Get(), 0, seed.Get(), 0, bytes);
@@ -3730,8 +3734,13 @@ void bindless_raw_copy(ID3D12Device* device) {
     if (got == words) return;
     if (got[stale * window_words] == bindless_expected)
         throw std::runtime_error("the program stored through the view the slot held before the copy");
+    if (got[later * window_words] == bindless_expected)
+        throw std::runtime_error("the program stored through the view written to the CPU heap after the copy");
     throw std::runtime_error("raw-copy output or guard words differ");
 }
+
+void bindless_raw_copy(ID3D12Device* device) { bindless_raw_copy_with(device, false); }
+void bindless_raw_copy_reused(ID3D12Device* device) { bindless_raw_copy_with(device, true); }
 
 // A direct-indexed compute program samples the heap texture with a linear clamp
 // sampler it builds from literal words, which the zero-parameter root does not
@@ -4185,6 +4194,7 @@ constexpr Scenario scenarios[] = {
     {L"bindless-table-store", bindless_table_store},
     {L"bindless-table-compute", bindless_table_compute},
     {L"bindless-raw-copy", bindless_raw_copy},
+    {L"bindless-raw-copy-reused", bindless_raw_copy_reused},
     {L"raster-heap-stride", raster_heap_stride},
     {L"large-dispatch", large_dispatch},
     {L"late-pipeline", late_pipeline},
@@ -4249,7 +4259,7 @@ const wchar_t* const selftest_scenarios[] = {L"labels",            L"cross-queue
                                              L"compute-root-recovery", L"compute-root-srv", L"bindless-compute",
                                              L"bindless-sampler", L"bindless-heap-read", L"bindless-texture-store",
                                              L"bindless-table-store", L"bindless-table-compute",
-                                             L"bindless-raw-copy",
+                                             L"bindless-raw-copy", L"bindless-raw-copy-reused",
                                              L"raster-heap-stride", L"large-dispatch",
                                              L"compute-heap-stride", L"late-pipeline",
                                              L"raster-sampler-waterfall"};
