@@ -39,8 +39,7 @@ rendering.
 RTX 4080 / Proton Experimental, provider from 95af9d3 and companion
 indirect fixture #87. Nine controls passed (the stream CLI argument
 order was corrected and the stream test repeated). The AMD path is
-portable by adapter selection but has not yet been exercised on AMD
-hardware. This is synthetic functional coverage, not a retail launch.
+portable by adapter selection; that run did not include AMD hardware, and the controls have since passed on AMD cards. This is synthetic functional coverage, not a retail launch.
 
 ```json
 {

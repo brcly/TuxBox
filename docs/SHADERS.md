@@ -150,7 +150,7 @@ The counts are per recorded request, so they overstate what a live run loses: a 
 
 The game traces rays in its own compute programs, as loops over the console's raw acceleration structure nodes, which the translator can't run. Four shadow programs have those loops replaced with native ray queries: the two irradiance cache shadow traces, the sun shadows and the spot lamp shadows ([lowering](../tools/shader-compiler/src/hlsl/scarlett_rays.rs)). Each is matched by name and exact code. A [replay of recorded requests](../tools/check_scarlett_rays.py) matched the expected geometry on an RTX 4070 Ti SUPER and a Radeon iGPU.
 
-In the game these dispatches still do nothing, because its ray tracing scenes aren't built yet. The native query counts every triangle, where the console's sun walk ignores a hit on an object marked with a zero word.
+TuxBox now builds the structures the title makes in its own memory and the ones it rehydrates. What these shadow dispatches draw in the game hasn't been checked. The native query counts every triangle, where the console's sun walk ignores a hit on an object marked with a zero word.
 
 ### Block dispatcher
 
@@ -176,7 +176,7 @@ Most wave reduction refusals come from programs over 6,000 instructions, where t
 
 Ray binning counts the lanes of a wave by a key each lane holds. The console serves one key per pass of a loop: it sums the lanes that hold the first remaining lane's key across the wave, and one of them adds the count to a buffer. The loop ends when a mask of the remaining lanes is empty, which a thread that holds only its own bit can't tell, so these programs were refused. When a loop has exactly that shape, the translator now has every counting lane add 1 at its own key ([rewrite](../tools/shader-compiler/src/hlsl/rewrite/key_counts.rs)). The buffer ends the same, no lane reads another, and the host's wave width doesn't matter. The loop stays as it was if anything reads a register it leaves different, or if another instruction uses the counters, since they pass through values the console's never hold. The rewrite is a last resort: a program the translator handles any other way keeps that translation. A 32-lane program, for example, keeps the wave together for the loop's lane reads ([retry](../tools/shader-compiler/src/hlsl/lockstep.rs)), so it is not rewritten.
 
-On 27,116 recorded ProjectScarlett requests, four more translate, all `CS_ScreenProbes_TraceRays_Fallback`, and every other request gives the same result or the same output byte for byte. A [GPU check](../tools/check_key_counts_gpu.py) compares 12 cases of a synthetic 64-lane loop with a model of the console, for groups of one and two waves. This hasn't been tested in the game.
+On 27,116 recorded ProjectScarlett requests, four more translate, all `CS_ScreenProbes_TraceRays_Fallback`, and every other request gives the same result or the same output byte for byte. A [GPU check](../tools/check_key_counts_gpu.py) compares 12 cases of a synthetic 64-lane loop with a model of the console, for groups of one and two waves. Its output hasn't been verified in a game.
 
 ### 64-lane programs on 32-lane hosts
 
@@ -190,7 +190,7 @@ A lane exchange (`ds_swizzle_b32`) inside a loop, in groups of whole 64-lane wav
 
 A [GPU check](../tools/check_paired_wave64.py) compares 18 synthetic programs with a model of the console, 256 waves each. All match on an RTX 4070 Ti SUPER and on a Radeon 610M forced to 32 lanes. The check covers lane masks and branches, lane reads and counts, DPP and row exchanges, shared memory with barriers, interleaved loops and groups of four waves. It doesn't cover buffers or textures, and it can't detect a missing memory ordering. Console code may also rely on a wave running in step without a barrier, which neither translation guarantees.
 
-On 39,999 recorded ProjectScarlett requests the second translation differs for 133 compute programs: 111 compile with DXC and DXV, and 22 are refused for lane swizzles, relative vector registers, implicit derivatives or one unhandled buffer write. This hasn't been tested in the game.
+On 39,999 recorded ProjectScarlett requests the second translation differs for 133 compute programs: 111 compile with DXC and DXV, and 22 are refused for lane swizzles, relative vector registers, implicit derivatives or one unhandled buffer write. Its output hasn't been verified in a game.
 
 A change to either translation shows in a [recorded set of outputs](../tools/shader-compiler/src/tests/hlsl/host_profiles.txt) that names the host profile affected. When the change is intended, update the record with `TUXBOX_BLESS_PROFILES=1` and `cargo test ... host_profiles`.
 

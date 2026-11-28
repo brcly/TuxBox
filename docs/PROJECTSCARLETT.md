@@ -21,7 +21,7 @@ python -m pip install -r requirements.txt
 python build.py
 ```
 
-To build only what ProjectScarlett loads, run `python build.py <target>` for each of `xmem`, `d3d12`, `bvh`, `xg`, `xapu`, `acphal`, `xcrdapi`, `gameinput` and `xgameruntime`. Some Linux distributions currently need the build workarounds described in [issue #4](https://github.com/brcly/TuxBox/issues/4).
+To build only what ProjectScarlett loads, run `python build.py <target>` for each of `xmem`, `d3d12`, `bvh`, `xg`, `xapu`, `acphal`, `xcrdapi`, `gameinput` and `xgameruntime`.
 
 ## Stage a working copy
 
@@ -64,10 +64,9 @@ the game executable. Do not overwrite existing package files: compare them
 first and use an untouched copy if they differ. The launcher warns about
 missing or incompatible local DLLs but does not block a system-installed
 compiler. The runtime reports an actual compiler load failure separately
-from other pipeline errors. This is not a confirmed fix for the black-screen
-report in #39.
+from other pipeline errors.
 
-The package's `XboxBvhBuilder.dll` runs its own console compute programs, and vkd3d-proton can't compile them: the log shows `Function 'xbox.…' is declared but has no definition` and failed compute pipelines. TuxBox's builder passes acceleration structure builds to the graphics driver instead. The structures the title streams in the console's own form and asks the builder to rehydrate are built the same way, from the geometry each call names. This removes those failures, but it has not been shown to make the title's ray tracing work.
+The package's `XboxBvhBuilder.dll` runs its own console compute programs, and vkd3d-proton can't compile them: the log shows `Function 'xbox.…' is declared but has no definition` and failed compute pipelines. TuxBox's builder passes acceleration structure builds to the graphics driver instead. The structures the title streams in the console's own form and asks the builder to rehydrate are built the same way, from the geometry each call names. This removes those failures. Whether the title's ray traced effects look right hasn't been checked.
 
 Copy the providers again after each rebuild. The launcher enables the constant-buffer layer only when the staged `d3d12_xs.dll` is byte-identical to `build/d3d12-smoke/d3d12_xs.dll`. With it, the launcher also adds `force_raw_va_cbv` to `VKD3D_CONFIG`, so constant buffers bound by address are read from the guest's 16-byte offsets.
 
@@ -99,8 +98,8 @@ Some of these compiles do not finish within any usable load time. A large
 translated compute pipeline (device slot 62 or 86) therefore waits only
 `TUXBOX_PIPELINE_DEADLINE` seconds (default 20). After that the game gets an
 empty stand-in and the compile continues in the background. The stand-in does no
-work, so whatever that program computes is missing until a later launch finds the
-compiled result in the driver cache. `TUXBOX_PIPELINE_DEADLINE=0` waits instead. `TUXBOX_LARGE_COMPILES` sets the number,
+work, and dispatches recorded with it are skipped. When the compile finishes,
+TuxBox swaps its pipeline in. `TUXBOX_PIPELINE_DEADLINE=0` waits instead. `TUXBOX_LARGE_COMPILES` sets the number,
 and `0` removes the limit. The first launch can still spend a long time loading.
 
 ### GPU waits and sample masks
@@ -111,7 +110,8 @@ and keeps the queue running instead of failing it:
 - A GPU memory wait recorded after rendering commands in the same list becomes a
   global barrier.
 - A GPU memory wait that TuxBox performs on the queue is released after five
-  seconds if its target value never arrives. The log line says
+  seconds when no recorded or running list is going to write its target value;
+  while one is, the queue keeps waiting. The log line says
   `GPU memory wait released`. Work that depended on the missing write may then
   run too early.
 - A sample mask that differs between the pixels of a quad is ignored, so the
@@ -308,37 +308,13 @@ started and did not finish, with their shaders.
 
 ### Earlier runs
 
-The two shader and memory paths added on November 26, 2026 have passed TuxBox's
-checks. The [memory copy](USAGE.md#memory-copy) on AMD's Linux driver hasn't
-been tried in this game yet; please report how far it gets. The [32-lane
-translation](SHADERS.md#64-lane-programs-on-32-lane-hosts) has had two NVIDIA
-reports, both ending in the same GPU hang ([#232](https://github.com/brcly/TuxBox/issues/232)):
-
-- An RTX 3080 Ti (driver 620.70.06, GE-Proton11-14, main at c6ce497) loaded for
-  about 2 h 40 min on a cold shader cache and reached the world's setup behind
-  the loading art. The kernel then logged Xid 109 (`CTX SWITCH TIMEOUT`) and
-  vkd3d-proton reported the device lost.
-- An RTX 5090 hit the same Xid 109 about 19 minutes in; an earlier run on it
-  ended with Xid 13.
-
-Xid 109 means a GPU context could not be switched out in time, which usually
-means one dispatch ran far too long.
-
-On November 25, 2026, an offline run on a GeForce RTX 4070 Ti SUPER got into the
-story intro. The game's own crash report records the state `Game Running`, frame
-32,534 and the story intro script after 18 minutes 11 seconds. GPU queues stalled
-on fence waits there. The run ended on a game assert (exit code 3) after a command
-list ran out of descriptor memory. The prologue cutscene did not appear in that
-run.
-[Run record](../evidence/projectscarlett-gameplay.json)
-
-Since then, a wait holds while a list that writes its value is recorded or still
-running, a list whose ray tracing source was replaced no longer stops its queue,
-and the ray tracing structures the title builds in its own memory are built. A
-wait that nothing will satisfy is still released after five seconds, and the log
-reports which lists write the label and where each queue stopped. Descriptor
-slots are reused once the GPU has finished with them (#172), and eviction no
-longer holds up submission (#395).
+Before November 28, runs ended before the world: out of video or system memory,
+on a GPU write fault after ray tracing builds were dropped, on stalled fence
+waits, or on a GPU hang. [Earlier run record](../evidence/projectscarlett-gameplay.json) ·
+[Earlier memory run](../evidence/projectscarlett-memory-run.json). The changes
+that got past them are in place. Xid 109 (`CTX SWITCH TIMEOUT`), a GPU command
+running far too long, is still reported on other NVIDIA cards, and a hang near
+world entry on AMD ([#232](https://github.com/brcly/TuxBox/issues/232)).
 
 An earlier run record covers startup up to the player selection prompt at
 3840×2160. [Startup record](../evidence/projectscarlett-startup.json)
@@ -425,19 +401,7 @@ mode uses fixed buckets; unfamiliar messages are deliberately grouped rather
 than publishing arbitrary stderr. Emitter-only success does not imply DXC,
 DXV, driver pipeline creation or gameplay success.
 
-Motivation: [the current-main runtime log in issue #39](https://github.com/brcly/TuxBox/issues/39#issuecomment-7136369501)
-(test commit 3086e0b, log SHA256
-`9d728e2e9d8374702a094e973be03f6528d6c63e906e416594df1188543a5b34`)
-contains 88 distinct explicit live refusals: 57 divergent wave reductions,
-13 EXEC elections, 8 DPP prologues, 6 saveexec prologues, 2 DS swizzles,
-one uninitialized lane read and one dynamic scalar offset. Its separate
-preparation run reports 3,966 unsupported out of 8,692 requests. These are
-different observation populations, not a denominator for the 88 live
-refusals. The runtime log also reports 32 sampled slot-86 stage failures
-(31 E_INVALIDARG, one E_FAIL, all unlinked), 131 host-memory import failure
-messages and three signaller timeouts; none alone establishes root cause.
-The highest remaining request-family ranking needs a fresh local triage,
-not extrapolation from the 88 visible runtime refusals.
+
 ### CPU differential verification of integer halves
 
 The independent packed-integer Python model now covers 14 wrapping packed
@@ -757,12 +721,6 @@ establish exact timing or causal attribution. Files over 512 MiB are rejected
 and lines over 64 KiB are counted and skipped. Reports omit raw log messages
 and paths, but may include module names and addresses; review before sharing.
 
-In the public issue #39 log, the tool identifies the first presentation at
-line 514, page mapping at 548, the slot 86 module-not-found HRESULT at 541,
-64 logged compute-pipeline failure events and 836 distinct refused shaders.
-The log has no exit record; the missing module is not identified by its
-HRESULT, and these observations do not establish the ultimate stop.
-
 ### Compare rendered frames
 
 Use a Python environment with Pillow installed (the existing project
@@ -803,8 +761,7 @@ Reproduce six synthetic 4K comparisons and two independent launch sessions:
 python tools/reference/scarlett_observability_fixture.py /tmp/observability-control
 ```
 
-[Validation receipt](../evidence/scarlett-observability.json) includes the
-public log fingerprint, controlled diagnostic outcomes and six 4K pairs
+[Validation receipt](../evidence/scarlett-observability.json) includes controlled diagnostic outcomes and six 4K pairs
 (identical, one changed pixel, local defect, black, tolerated one-level
 changes, and swapped color channels). These are CPU-side checks, not real
 title rendering comparisons.
@@ -818,15 +775,6 @@ summing their samples, and reports sampled stage-pair counts and link status
 without disclosing shader identifiers. These are observed log events, not
 independent allocations or confirmed causes. A missing exit record remains
 an incomplete log, not proof of a crash or hang.
-
-Applied to the public issue #39 retest log (SHA256
-`9d728e2e9d8374702a094e973be03f6528d6c63e906e416594df1188543a5b34`),
-this distinguishes 262 failed memory-allocation attempts from 131 host-memory
-import failures, 12 shader interface mismatch messages, 32 sampled unlinked
-stage failures and three signaller timeouts. The last recorded draw does not
-establish a visible frame or gameplay. The recorded maximum counters are
-1,024 compute and 2,048 raster-stream substitute pipelines; not exact final
-totals or distinct shaders. No retail inputs were used locally.
 ### Ordinary scalar bit operations
 
 The generic translator supports nine additional scalar bit instructions and applies the ordinary-scalar proof to the three forms already added by #56
@@ -889,10 +837,6 @@ bytes, HRESULT and title-relative caller. It omits host addresses and
 resource data, deduplicates the first 256 distinct failure keys, and does
 not change allocation, lifetime, fallback or error-return behavior. It
 does not trace imports performed internally by the desktop driver.
-The issue #39 log contains 262 failed driver allocation attempts and
-131 host import failure messages, not a confirmed VRAM exhaustion or
-a proven fault in these provider call sites. The opt-in trace is intended
-to distinguish those possibilities in a subsequent authorized run.
 
 
 ### Comparing provider revisions
@@ -923,8 +867,8 @@ not all graphics or pipeline-stream paths. Share keys and sizes only, not
 title shader files or private raw logs.
 
 
-To test the memory-pressure hypothesis in issue #231, sample the actual
-guest process (not the UMU parent) during the cold launch:
+To check for memory pressure during a cold launch, sample the actual guest
+process (not the UMU parent):
 
 ```sh
 python tools/sample_process_cpu.py PID --seconds 300 --interval 1 --output cold-memory.jsonl

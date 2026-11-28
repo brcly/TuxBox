@@ -36,15 +36,13 @@ host profile: adapter=10de:2705 wave=32-32 section-import=aliased descriptor-byt
 
 ### Memory copy
 
-Mesa's RADV driver on Linux does not import the memory a game's pages live in. vkd3d-proton still reports success, and the GPU reads other memory. When the profile shows `substituted` or `refused`, TuxBox imports a private copy of those pages instead and copies the CPU's changes into it before each submission. Hosts that report `aliased` never take this path.
+A game's memory manager (XMem) backs its physical pages with private memory, which the GPU reads directly after import, on Mesa's RADV driver for Linux too. For other game memory on a host that doesn't import it correctly, where the profile shows `substituted` or `refused`, TuxBox imports a private copy of those pages instead and copies the CPU's changes into it before each submission. Hosts that report `aliased` never take this path.
 
 The copy has known limits:
 
 - **GPU writes stay in the copy.** The CPU, and other GPU addresses of the same pages, don't see them.
 - **It costs time.** Changed memory is found and copied before every submission.
-- **Retail titles aren't proven.** In a contributor's tests of the change this comes from ([#200](https://github.com/brcly/TuxBox/pull/200), RX 6700 XT), ProjectScarlett reached the account picker far more slowly than with direct imports, and crashed in two of three runs.
-
-A way for RADV to read the game's pages directly would replace it ([#191](https://github.com/brcly/TuxBox/issues/191)).
+- **Retail titles aren't proven** on this path.
 
 ## Performance overlay
 

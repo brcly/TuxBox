@@ -28,7 +28,7 @@ TuxBox is early. No retail game is playable yet.
 | Title | Where it gets to on Linux | Where it gets to on Windows |
 | --- | --- | --- |
 | **Lanes**, our own test game | Fully playable | Untested |
-| **The Matrix Awakens** | Menu and through the chase sequence into free-roam, with visual faults and crashes | Untested |
+| **The Matrix Awakens** | Menu, the opening of the chase, and a free-roam city test, with visual faults and crashes | Untested |
 | **GTA VI** | Renders the opening world scene at well under one frame a second, then a GPU fault | Untested |
 
 Games are tested on an NVIDIA GeForce RTX 4070 Ti SUPER; the built-in checks have also passed on other NVIDIA and AMD cards. You supply your own games and system files. [Progress](docs/PROGRESS.md) · [Test results](docs/RESULTS.md)

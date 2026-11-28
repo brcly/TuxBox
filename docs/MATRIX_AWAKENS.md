@@ -118,7 +118,7 @@ On Radeon the game presented a 3840 × 2160 frame, created its instance- and clu
 
 ## What carries over to ProjectScarlett
 
-ProjectScarlett opens its Americas window on stock Proton Experimental, loads texture assets and presents both 4K display buffers during startup. Desktop captures still show black. [Current title progress](PROGRESS.md) · [Original package inspection](MATRIX_HISTORY.md#what-carries-over-to-projectscarlett)
+What this work gives ProjectScarlett is recorded in its own pages. [Current title progress](PROGRESS.md) · [Original package inspection](MATRIX_HISTORY.md#what-carries-over-to-projectscarlett)
 
 ## Earlier experiments
 

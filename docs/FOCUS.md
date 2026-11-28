@@ -24,7 +24,7 @@ Open work:
 ## GPU faults and speed
 
 - ProjectScarlett's run ends with Xid 13 in the world's opening scene. `TUXBOX_TRACE_GPU_FAULT=1` names the unfinished draws; in one launch they all used the distant lights shaders, which index textures and buffers with values read from game data.
-- Frames in that scene took 11 to 17 seconds. Measure where the time goes before changing anything.
+- Frames in that scene took 11 to 17 seconds. Measure where the time goes before changing anything. One lead: on November 27 a contributor traced world frames of about 12 s to every batch reading back and republishing hundreds of MiB of textures, because a draw that can reach the whole descriptor heap counts every texture with a writable view there as written ([#215](https://github.com/brcly/TuxBox/issues/215), [discussion #300](https://github.com/brcly/TuxBox/discussions/300)). It hasn't been measured since.
 
 ## Startup and shader compilation
 
@@ -34,7 +34,7 @@ A warm launch reached player selection in 69 s. Cold launches take many minutes,
 - **Make DXC faster.** Try its settings, or our own build of it. Lifetime markers are now off for every shader. With the simpler branch and mesh code, 800 random ProjectScarlett programs compiled 1.26 times as fast offline: 3.9 times for `ms_6_6`, but only 1.05 times for `cs_6_6`, half of the total. A DXC that lists `-fnew-inlining-behavior` now gets it, which compiled 800 programs 1.31 times as fast. Splitting compute shaders into small functions made DXC about 3.4 times as fast on 12 large ones, but dxil-spirv could not convert the split shaders that otherwise built. No launch gain has been measured.
 - **Benchmark a shorter route.** On Linux, translating straight to SPIR-V would drop DXC and dxil-spirv. Windows would keep DXIL. Compare both against the per-stage baseline before building either.
 - **Measure speed in the checks.** A change that alters compile speed without changing coverage should show in `tuxbox.py check`, with outputs still verified.
-- **Fewer empty stand-ins.** A large compile that passes its deadline is replaced by an empty pipeline for the whole session. Swapping in the finished result later is untested. Lowering the number of large compiles with available memory went with hundreds more stand-ins in one cold launch; the cause was not isolated.
+- **Fewer empty stand-ins.** A large compile that passes its deadline gets an empty pipeline until it finishes, and dispatches recorded meanwhile are skipped. Lowering the number of large compiles with available memory went with hundreds more stand-ins in one cold launch; the cause was not isolated.
 - **Large compute shaders.** Single driver compiles took up to 158 s. Smaller or better structured translated code would help every stage.
 - **Later:** translate the shaders seen in earlier launches on all cores before the game asks.
 
@@ -48,7 +48,6 @@ A warm launch reached player selection in 69 s. Cold launches take many minutes,
 ProjectScarlett's presenter shares a lock with its audio output. When audio start-up was slow, the game's own code left that lock held and froze presentation; TuxBox now patches that. The slow start came from a failing USB audio device on the host: while it was enabled, streams timed out and piled up.
 
 - Find out why one failing device stalls streams on another output, and whether Wine can recover or report it.
-- Check whether the black screen before player selection is the splash screen that should be drawn there.
 
 ## Frame pacing
 
@@ -56,7 +55,7 @@ At high frame rates ProjectScarlett shows pairs of frame time spikes between oth
 
 ## Shader translation
 
-Compile time comes first (above), then unsupported shaders; a larger change with some risk is acceptable if it is verified. Preparation on November 28 found 165 unsupported programs among 19,023 it had requests for, of 25,889 in the shader pack ([refusals](SHADERS.md#projectscarlett-refusals)). Not every unsupported program is one a live run needs. In a launch the same day, the causes that blocked the most pipelines were group sums in divergent control flow (43), lane reads inside non-uniform loops (24), waves that must be complete (15) and unrecognized mesh launch calculations (15).
+Compile time comes first (above), then unsupported shaders; a larger change with some risk is acceptable if it is verified. Preparation on November 28 found 165 unsupported programs among 19,023 it had requests for, of 25,889 in the shader pack ([refusals](SHADERS.md#projectscarlett-refusals)). Not every unsupported program is one a live run needs. In a launch on November 26, the causes that blocked the most pipelines were group sums in divergent control flow (43), lane reads inside non-uniform loops (24), waves that must be complete (15) and unrecognized mesh launch calculations (15).
 
 - Many pipelines still get empty stand-ins because a stage can't be translated. Rank them with the [pipeline failure record](PROJECTSCARLETT.md#finding-why-pipelines-fail), by pipelines blocked rather than by refused requests. A refusal for a missing buffer stride is often a first attempt that a retry translates.
 - Check each instruction against AMD's RDNA 2 instruction set reference, which is also published as XML with its developer tools. AMD's Radeon GPU Analyzer shows what a pattern compiles to; the offline Vulkan compiler in version 2.15 does not target the console's generation. Neither proves a translation correct: compare its output on the GPU with a reference.
@@ -66,12 +65,13 @@ Compile time comes first (above), then unsupported shaders; a larger change with
 
 ## AMD and NVIDIA
 
-- RADV substitutes other memory for imported game pages, and TuxBox copies them instead, which is slow and loses GPU writes ([#191](https://github.com/brcly/TuxBox/issues/191)).
+- The November 28 memory, ray tracing and fence wait changes haven't been run in a game on AMD, and RDNA2 runs have hung near world entry ([#232](https://github.com/brcly/TuxBox/issues/232)).
+- Render heaps can be freed while the GPU still reads them, which has lost the device on AMD ([#323](https://github.com/brcly/TuxBox/issues/323)).
 - Shared code needs a run on both vendors. See [CONTRIBUTING](../CONTRIBUTING.md#amd-and-nvidia).
 
 ## GPU synchronisation
 
-A queue held on a fence label is released after five seconds only when no recorded or running list will write the value. A rejected batch still drops everything its queue sends afterwards, so one refusal can stall the whole title ([#215](https://github.com/brcly/TuxBox/issues/215)).
+A queue held on a fence label is released after five seconds only when no recorded or running list will write the value. A rejected batch still drops everything its queue sends afterwards, so one refusal can stall the whole title. Look for `rejected a guest command-list batch` in the log.
 
 ## Keeping the ground rules
 
