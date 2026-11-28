@@ -40,6 +40,16 @@ REFUSALS = (
     # Heap-indexed IDXEN access, retried with the stride table appended.
     ("heap_stride", r"raw buffer IDXEN needs the console descriptor stride"),
     ("packed_root", r"(?:unsupported packed compute root parameter|packed root arguments exceed 64 dwords|root argument offset outside signature|unsupported mutation of a root address|root address or padding used as shader data)"),
+    # Named emitter refusals that used to fall into other_refusal. Patterns
+    # match the normalized reasons used by the pipeline-failure ranking.
+    ("mixed_lane_ds_write2_b32", r"mixed lane Wave32 cannot lower ds_write2_b32"),
+    ("mixed_lane_s_setpc_b64", r"mixed lane Wave32 cannot lower s_setpc_b64"),
+    ("readlane_non_uniform_loop", r"v_readlane_b32 at 0x[0-9a-f_]+: inside non-uniform loop"),
+    ("buffer_record_count", r"buffer record count read from a descriptor with no one host buffer"),
+    ("bvh_traversal", r"raw BVH node intersection requires traversal translation"),
+    ("half_float_attr3", r"32-bit read of half-float PS attr3"),
+    ("backward_permute_scalar_branches", r"backward permute with scalar branches"),
+    ("mesh_wave_exchange_loop", r"mesh wave exchange .* inside a loop"),
 
 )
 
