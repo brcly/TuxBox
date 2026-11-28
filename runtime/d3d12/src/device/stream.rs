@@ -245,9 +245,14 @@ unsafe fn create(
         unsafe { field.write(table.native.as_raw()) };
         pipeline.raster_table = Some(table);
     }
+    // Under descriptor paging the mesh table appends the resource index map to
+    // the root. Each stage is then translated on its declared root with the map
+    // appended there: bindings name the map by register and space, so the
+    // native pixel mirrors before it do not matter.
+    let mapped = pipeline.raster_table.as_ref().is_some_and(|table| table.index_map.is_some());
     for (index, stage) in [(6, shader_cache::Stage::Amplification), (7, shader_cache::Stage::Mesh)] {
         let Some((code, _)) = original[index] else { continue };
-        let compiled = shader_cache::mesh_stage(code, stage, guest_root.map(|root| root.payload()));
+        let compiled = shader_cache::mesh_stage(code, stage, guest_root.map(|root| root.payload()), mapped);
         if compiled.is_err() && let Some(root) = guest_root {
             super::compute_table::capture_stage_root(code, root);
         }
@@ -272,17 +277,18 @@ unsafe fn create(
         super::compute_table::capture_stage_root(pixel, root);
     }
     let mut rooted = [None, None];
-    // A mesh pipeline's pixel stage runs under the guest root too (its
-    // parameters are unchanged by the mesh table). Translate it against that
+    // A mesh pipeline's pixel stage keeps the guest parameter order too (with
+    // the index map appended when present). Translate it against that
     // root, as a vertex/pixel pair is, so its constant buffers and views use the
     // root's registers rather than the root-less private space. Where the pixel
     // program reads a table at other slots than the root declares, the mesh
     // table carries a root that follows the program instead.
     if let (Some(root), Some((pixel, _)), Some(_)) = (guest_root, original[1], original[7])
         && original[0].is_none()
-        && let Some(variant) = shader_cache::raster_with_root(
+        && let Some(variant) = shader_cache::mesh_pixel_request(
             pixel,
             pipeline.raster_table.as_ref().and_then(|table| table.pixel_root.as_ref()).unwrap_or(root).payload(),
+            mapped,
         )
         && shader_cache::prepared(&variant).is_some()
     {
@@ -307,12 +313,27 @@ unsafe fn create(
         }
         && let Ok(Some(extended)) =
             super::mesh_table::reflected(&device.native, root, mesh, Some(pixel), node_mask, &samplers)
-        && let Some(variant) = extended.pixel_root.as_ref().and_then(|r| shader_cache::raster_with_root(pixel, r.payload()))
+        && let Some(variant) = extended.pixel_root.as_ref().and_then(|r| shader_cache::mesh_pixel_request(pixel, r.payload(), mapped))
         && shader_cache::prepared(&variant).is_some()
     {
         unsafe { field.write(extended.native.as_raw()) };
         pipeline.raster_table = Some(extended);
         rooted[1] = Some(variant);
+    }
+    // A pixel stage reads the map only through a request on its root. When
+    // neither attempt above translated, it keeps the root-less translation, as
+    // without the map, so its heap reads use guest indices under paging. A
+    // failed pipeline would end ProjectScarlett instead (see `fallback`).
+    if mapped && rooted[1].is_none() && let Some((pixel, _)) = original[1] {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static UNMAPPED: AtomicU32 = AtomicU32::new(0);
+        let n = UNMAPPED.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 64 || n.is_power_of_two() {
+            let digest = shader_cache::source_digest(pixel).unwrap_or_default();
+            crate::diagnostics::log(&format!(
+                "mesh pipeline pixel stage PS {} has no translation on its root and cannot read the resource index map (#{n})",
+                digest.get(..16).unwrap_or("unknown")));
+        }
     }
     if let Some(root) = guest_root && original[0].is_some() && original[1].is_some()
         && (root_record.is_none() || original[2..].iter().any(Option::is_some))
@@ -708,7 +729,7 @@ unsafe fn create(
             && bound.BytecodeLength <= 64 * 1024 * 1024
         {
             let consumer = unsafe { slice::from_raw_parts(bound.pShaderBytecode.cast::<u8>(), bound.BytecodeLength) };
-            let source = shader_cache::mesh_link_source(mesh_code, guest_root.map(|root| root.payload()));
+            let source = shader_cache::mesh_link_source(mesh_code, guest_root.map(|root| root.payload()), mapped);
             if let Some(linked) = shader_cache::link_mesh(&source, (pixel, pixel_code), &stages[mi], consumer) {
                 unsafe {
                     mesh_field.write(D3D12_SHADER_BYTECODE {

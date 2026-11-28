@@ -1,5 +1,5 @@
 //! Use the FSSM layout at the same root parameter indices the title binds.
-use super::{compute::RootSource, compute_table::ComputeTable};
+use super::{compute::RootSource, compute_table::{ComputeTable, IndexMapBinding}};
 use std::{ops::Range, sync::Arc};
 use tuxbox_dxbc::{
     mesh_table::{MeshLayout, shader_resources},
@@ -229,6 +229,13 @@ pub(super) fn reflected(
                 pDescriptorRanges: ranges.as_ptr(),
             })
         };
+        // Every mirrored parameter is a table (one DWORD). Reserve the map's
+        // two DWORDs only after accounting for all of them.
+        // Replacements change registers/ranges, never parameter kinds or the
+        // size of root constants, so the guest cost plus mirrors is exact.
+        // The stages read the map through requests on their declared roots
+        // with the map appended (`shader_cache::mesh_stage`).
+        let append_map = root.heap_index_map_fits(mirrored.len());
         // The root the pixel program is translated against: the title's, with
         // those tables as the program reads them.
         let pixel_root = if pixel_storage.is_empty() && samplers.is_empty() {
@@ -271,6 +278,23 @@ pub(super) fn reflected(
             mirrors.push((params.len() as u32, guest as u32));
             params.push(copy);
         }
+        let index_map = if append_map {
+            let slot = params.len() as u32;
+            params.push(D3D12_ROOT_PARAMETER1 {
+                ParameterType: D3D12_ROOT_PARAMETER_TYPE_SRV,
+                ShaderVisibility: D3D12_SHADER_VISIBILITY_ALL,
+                Anonymous: D3D12_ROOT_PARAMETER1_0 {
+                    Descriptor: D3D12_ROOT_DESCRIPTOR1 {
+                        ShaderRegister: 0,
+                        RegisterSpace: 32766,
+                        Flags: D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE,
+                    },
+                },
+            });
+            Some(IndexMapBinding { slot, scalar_word: 0, scalar_mask: 0 })
+        } else {
+            None
+        };
         if lengths.len() < params.len() {
             lengths.resize(params.len(), 0);
         }
@@ -287,7 +311,7 @@ pub(super) fn reflected(
             layout: RootSource::new(bytes),
             lengths,
             accessed_views,
-            index_map: None,
+            index_map,
             mirrors,
             heap_strides: None,
             pixel_root,

@@ -245,13 +245,44 @@ pub(super) fn link_on_demand(
 
 /// The Xbox source a mesh stage was translated from: the precompiled original
 /// when one exists, otherwise its pipeline-root variant (see `mesh_stage`).
-pub(super) fn mesh_link_source(shader: &[u8], root: Option<&[u8]>) -> Vec<u8> {
+/// With `mapped`, the request on the root with the index map (see `mesh_stage`).
+pub(super) fn mesh_link_source(shader: &[u8], root: Option<&[u8]>, mapped: bool) -> Vec<u8> {
+    if mapped && let Some(request) = root.and_then(|root| mapped_request(shader, root)) {
+        return request;
+    }
     if let Some(source) = source_digest(shader)
         && read_portable("by_source", &source, Stage::Mesh).is_some()
     {
         return shader.to_vec();
     }
     root.and_then(|root| with_root(shader, root)).unwrap_or_else(|| shader.to_vec())
+}
+
+/// The request for `shader` under a pipeline root that gains the resource
+/// index map (descriptor paging): its request on the declared `root`, with the
+/// map appended to that root. Derived, not rebuilt, so that the requests a
+/// launch recorded can be prepared offline byte for byte.
+fn mapped_request(shader: &[u8], root: &[u8]) -> Option<Vec<u8>> {
+    let declared = match with_root(shader, root) {
+        Some(request) => request,
+        // `with_root` keeps a program that already carries this root.
+        None if tuxbox_dxbc::Dxbc::parse(shader).ok().and_then(|dxbc| {
+            let part = dxbc.chunk(b"RTS0")?;
+            shader.get(part.offset..part.offset + part.size).map(|embedded| embedded == root)
+        }) == Some(true) => shader.to_vec(),
+        None => return None,
+    };
+    tuxbox_dxbc::rootsig::with_index_map(&declared).ok()
+}
+
+/// A mesh pipeline's pixel request on `root`, with the resource index map
+/// appended to it when `mapped`. `None` keeps the program as it is.
+pub(super) fn mesh_pixel_request(pixel: &[u8], root: &[u8], mapped: bool) -> Option<Vec<u8>> {
+    if !mapped {
+        return raster_with_root(pixel, root);
+    }
+    let (Stage::Pixel, ShaderCode::Xbox) = shader_code(pixel)? else { return None };
+    mapped_request(pixel, root)
 }
 
 /// Retranslates a mesh program for one pixel consumer, so that its vertex and
@@ -521,10 +552,13 @@ fn portable_wave_range_ignores_xbox_and_unconstrained_shaders() {
 
 /// Console mesh stages always use a DXIL container. Resolve stripped programs
 /// before the host call and require portable replacements to match the stage.
+/// With `mapped`, the pipeline root gains the resource index map under
+/// descriptor paging, and the request is the one on `root` with the map.
 pub(super) fn mesh_stage(
     shader: &[u8],
     expected: Stage,
     root: Option<&[u8]>,
+    mapped: bool,
 ) -> Result<Option<Vec<u8>>, HRESULT> {
     match shader_code(shader) {
         Some((stage, ShaderCode::Portable)) if stage == expected => Ok(None),
@@ -532,6 +566,11 @@ pub(super) fn mesh_stage(
             let Some(root) = root else {
                 return translate(shader, stage).map(Some).ok_or(E_NOTIMPL);
             };
+            if mapped {
+                // Precompiled replacements of the original cannot read the map.
+                let request = mapped_request(shader, root).ok_or(E_INVALIDARG)?;
+                return translate(&request, stage).map(Some).ok_or(E_NOTIMPL);
+            }
             let dxbc = tuxbox_dxbc::Dxbc::parse(shader).map_err(|_| E_INVALIDARG)?;
             if let Some(embedded) = dxbc.chunk(b"RTS0") {
                 if &shader[embedded.offset..embedded.offset + embedded.size] == root {
