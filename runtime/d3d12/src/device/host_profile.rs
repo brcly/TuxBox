@@ -4,7 +4,8 @@
 //! name: the same card behaves differently under another driver or system.
 //! `TUXBOX_HOST_PROFILE` replaces what the driver reports, so one machine can
 //! exercise a path meant for another, for example `wave=32` or
-//! `wave=32-64;section-import=substituted;mesh=none`.
+//! `wave=32-64;section-import=substituted;mesh=none`, or `cpu-view-heap=262144`
+//! to refuse larger CPU-only view heaps as a driver may.
 mod section_probe;
 
 use super::Device;
@@ -52,6 +53,10 @@ pub(crate) struct Overrides {
     pub(crate) section_import: Option<SectionImport>,
     pub(crate) mesh: Option<bool>,
     pub(crate) rays: Option<bool>,
+    /// The most descriptors one CPU-only view heap may hold. The driver does
+    /// not report its own limit, so a larger heap is refused for memory as the
+    /// driver would refuse it.
+    pub(crate) cpu_view_heap: Option<u32>,
 }
 
 fn lane_count(text: &str) -> Option<u32> {
@@ -80,6 +85,10 @@ pub(crate) fn parse_overrides(text: &str) -> Result<Overrides, String> {
             ("section-import", "refused") => overrides.section_import = Some(SectionImport::Refused),
             ("mesh", "none") => overrides.mesh = Some(false),
             ("rays", "none") => overrides.rays = Some(false),
+            ("cpu-view-heap", value) => {
+                let most = value.parse::<u32>().ok().filter(|&most| most > 0).ok_or_else(bad)?;
+                overrides.cpu_view_heap = Some(most);
+            }
             _ => return Err(bad()),
         }
     }
@@ -95,6 +104,11 @@ fn overrides() -> Overrides {
             Overrides::default()
         })
     })
+}
+
+/// The most descriptors one CPU-only view heap may hold when a profile sets it.
+pub(super) fn cpu_view_heap() -> Option<u32> {
+    overrides().cpu_view_heap
 }
 
 /// Per-device answers, each found when first needed.

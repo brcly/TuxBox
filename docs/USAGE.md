@@ -32,7 +32,7 @@ host profile: adapter=10de:2705 wave=32-32 section-import=aliased descriptor-byt
 | `mesh` | Whether the card runs mesh shaders: `yes` or `none`. Without them, mesh dispatch signatures are refused with `E_NOTIMPL` |
 | `rays` | Whether the card traces rays: `yes` or `none`. Without it, ray dispatch signatures are refused with `E_NOTIMPL` |
 
-`TUXBOX_HOST_PROFILE` replaces what the driver reports, so one machine can try a path meant for another. For example, `wave=32` makes a 64-lane card take the 32-lane translations. Settings are separated by `;`, and one unusable setting rejects them all. Overridden values are marked `(set)` in the log. Forcing `section-import=substituted` takes the [memory copy](#memory-copy) on a card that doesn't need it. `mesh=none` and `rays=none` take a capability away; an override can't add one the driver lacks. An override cannot reproduce another driver's own behaviour.
+`TUXBOX_HOST_PROFILE` replaces what the driver reports, so one machine can try a path meant for another. For example, `wave=32` makes a 64-lane card take the 32-lane translations. Settings are separated by `;`, and one unusable setting rejects them all. Overridden values are marked `(set)` in the log. Forcing `section-import=substituted` takes the [memory copy](#memory-copy) on a card that doesn't need it. `mesh=none` and `rays=none` take a capability away; an override can't add one the driver lacks. `cpu-view-heap=1048576` refuses any CPU-only view heap above that many descriptors, as some drivers do without saying so, so a large guest heap is kept in several smaller CPU heaps. An override cannot reproduce another driver's own behaviour.
 
 ### Memory copy
 

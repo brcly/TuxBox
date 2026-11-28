@@ -1338,8 +1338,18 @@ def verify(host, output, adapter, selected=None, samples=1):
                                  "lanes/d3d12_xs.dll": ("D3D12XboxCreateDevice",)},
                       config="lanes/MicrosoftGame.config", device_factory="xbox",
                       dependencies=("lanes/XboxBvhBuilder.dll",) if scenario == "ray-tracing-builder" else ())
-            # A card with mesh shaders also takes the refusal a card without them gets.
             saved_profile = host.env.get("TUXBOX_HOST_PROFILE")
+            # A driver can refuse one CPU view heap as large as the guest heap, and
+            # none reports the size it takes. Refuse what an Intel UHD refuses, so
+            # every card keeps the guest heap in smaller CPU heaps.
+            host.env["TUXBOX_HOST_PROFILE"] = "cpu-view-heap=1048576"
+            check("lanes-selftest-descriptor-reclaim-split", "lanes/lanes.exe",
+                  ["--selftest", "descriptor-reclaim", *gpu_args, "--report"],
+                  rf"lanes-selftest PASS pci={pci} scenario=descriptor-reclaim passed=1",
+                  providers={"lanes/xmem.dll": memory_symbols, "lanes/GameInput.dll": ("#1",),
+                             "lanes/d3d12_xs.dll": ("D3D12XboxCreateDevice",)},
+                  config="lanes/MicrosoftGame.config", device_factory="xbox")
+            # A card with mesh shaders also takes the refusal a card without them gets.
             host.env["TUXBOX_HOST_PROFILE"] = "mesh=none"
             # The scenario itself requires no mesh shaders and a refused signature.
             check("lanes-selftest-mesh-signature-none", "lanes/lanes.exe",
@@ -1500,6 +1510,7 @@ GATE_LABELS = {
     "lanes-selftest-gpu-indirect-dispatch": "GPU-written arguments controlling an indirect dispatch",
     "lanes-selftest-gpu-indirect-order": "Indirect arguments and counts read after the dispatch that wrote them",
     "lanes-selftest-mesh-signature": "A mesh dispatch signature made only when the device reports mesh shaders",
+    "lanes-selftest-descriptor-reclaim-split": "Descriptor slot reclamation with the guest heap kept in several CPU heaps, as when a host refuses one heap that large",
     "lanes-selftest-mesh-signature-none": "A mesh dispatch signature refused when the host profile takes mesh shaders away",
     "lanes-selftest-dispatch-wait": "A memory wait before and after a compute dispatch",
     "lanes-selftest-texture-readback": "A guest texture copied back to title memory",

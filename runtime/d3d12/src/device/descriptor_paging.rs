@@ -1,7 +1,8 @@
 //! A writable Xbox descriptor arena can exceed the shader-visible heap limit.
-//! Store all native descriptors in a CPU heap and materialize bounded root
+//! Store all native descriptors in CPU heaps and materialize bounded root
 //! tables in a shader-visible heap when the command list references them.
 mod spans;
+mod staging;
 mod leases;
 mod lookup;
 use spans::FreeSpans;
@@ -265,18 +266,41 @@ impl Tables {
     }
 }
 
-struct NativeArena {
-    _memory: GuestMemory,
+// What each map knows about the views in one CPU heap, forgotten with it.
+struct ChunkViews {
     imported: super::placement::DescriptorRange<super::views::DescriptorBacking>,
     placed: super::placement::DescriptorRange<super::placement::PlacedView>,
     scenes: super::placement::DescriptorRange<super::blas::SceneView>,
     _strides: super::placement::DescriptorRange<u32>,
-    _staging: ID3D12DescriptorHeap,
+}
+
+impl ChunkViews {
+    fn new(owner: &super::Device, heap: &ID3D12DescriptorHeap, desc: &D3D12_DESCRIPTOR_HEAP_DESC) -> Option<Self> {
+        let device = &owner.native;
+        let kind = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        Some(Self {
+            imported: owner.state.imported_views.heap(device, heap, desc, kind)?,
+            placed: owner.state.placements.views.heap(device, heap, desc, kind)?,
+            scenes: owner.state.blas.views.heap(device, heap, desc, kind)?,
+            _strides: owner.state.view_strides.heap(device, heap, desc, kind)?,
+        })
+    }
+}
+
+struct NativeArena {
+    _memory: GuestMemory,
+    // The maps are shared by every chunk; the first chunk's ranges reach them.
+    imported: super::placement::DescriptorRange<super::views::DescriptorBacking>,
+    placed: super::placement::DescriptorRange<super::placement::PlacedView>,
+    scenes: super::placement::DescriptorRange<super::blas::SceneView>,
+    _strides: super::placement::DescriptorRange<u32>,
+    _later_chunks: Vec<ChunkViews>,
+    _staging: Vec<ID3D12DescriptorHeap>,
     visible: ID3D12DescriptorHeap,
     device: ID3D12Device,
     visible_cpu_start: usize,
     visible_gpu_start: u64,
-    staging_cpu_start: usize,
+    staging: staging::Chunks,
 }
 
 pub(crate) struct Arena {
@@ -325,11 +349,28 @@ impl Arena {
             NumDescriptors: limit,
             ..*desc
         };
-        let staging: ID3D12DescriptorHeap = unsafe { device.CreateDescriptorHeap(&cpu)? };
-        let visible = if desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE {
+        let shader_visible = desc.Flags == D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        let most = super::host_profile::cpu_view_heap();
+        // Only a shader-visible arena keeps a separate visible heap; otherwise
+        // the CPU heap is the one the guest's handles must reach in one piece.
+        let (chunk, staging) = staging::create_chunks(desc.NumDescriptors, shader_visible, |count| {
+            if most.is_some_and(|most| count > most) {
+                return Err(E_OUTOFMEMORY.into());
+            }
+            let chunk = D3D12_DESCRIPTOR_HEAP_DESC { NumDescriptors: count, ..cpu };
+            unsafe { device.CreateDescriptorHeap::<ID3D12DescriptorHeap>(&chunk) }
+        })?;
+        if staging.len() > 1 {
+            crate::diagnostics::log(&format!(
+                "descriptor arena: host refused one {}-descriptor CPU heap; using {} of {chunk}",
+                desc.NumDescriptors,
+                staging.len()
+            ));
+        }
+        let visible = if shader_visible {
             unsafe { device.CreateDescriptorHeap(&gpu)? }
         } else {
-            staging.clone()
+            staging[0].clone()
         };
         let stride = unsafe { device.GetDescriptorHandleIncrementSize(desc.Type) } as usize;
         let inline = owner.state.device11_queue
@@ -353,43 +394,36 @@ impl Arena {
         } else {
             0
         };
-        let staging_cpu_start = unsafe { staging.GetCPUDescriptorHandleForHeapStart() }.ptr;
-        let imported = owner
-            .state
-            .imported_views
-            .heap(device, &staging, &cpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
-            .ok_or(E_INVALIDARG)?;
-        let placed = owner
-            .state
-            .placements
-            .views
-            .heap(device, &staging, &cpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
-            .ok_or(E_INVALIDARG)?;
-        let scenes = owner
-            .state
-            .blas
-            .views
-            .heap(device, &staging, &cpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
-            .ok_or(E_INVALIDARG)?;
-        let strides = owner
-            .state
-            .view_strides
-            .heap(device, &staging, &cpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
-            .ok_or(E_INVALIDARG)?;
+        let starts = staging
+            .iter()
+            .map(|heap| unsafe { heap.GetCPUDescriptorHandleForHeapStart() }.ptr)
+            .collect();
+        let mut views = staging
+            .iter()
+            .enumerate()
+            .map(|(index, heap)| {
+                let held = chunk.min(desc.NumDescriptors - index as u32 * chunk);
+                ChunkViews::new(owner, heap, &D3D12_DESCRIPTOR_HEAP_DESC { NumDescriptors: held, ..cpu })
+                    .ok_or(E_INVALIDARG)
+            })
+            .collect::<core::result::Result<Vec<_>, _>>()?
+            .into_iter();
+        let first = views.next().ok_or(E_INVALIDARG)?;
         let arena = Arc::new(Self {
             base_address,
             native: Some(NativeArena {
                 _memory: memory,
-                imported,
-                placed,
-                scenes,
-                _strides: strides,
+                imported: first.imported,
+                placed: first.placed,
+                scenes: first.scenes,
+                _strides: first._strides,
+                _later_chunks: views.collect(),
                 _staging: staging,
                 visible,
                 device: device.clone(),
                 visible_cpu_start,
                 visible_gpu_start,
-                staging_cpu_start,
+                staging: staging::Chunks { starts, chunk },
             }),
             registry: registry.clone(),
             stride,
@@ -429,14 +463,12 @@ impl Arena {
     }
 
     pub(crate) fn cpu(&self, address: usize) -> D3D12_CPU_DESCRIPTOR_HANDLE {
-        let start = self
-            .native
-            .as_ref()
-            .map_or(0x3000_0000, |n| n.staging_cpu_start);
         let slot = (address - self.base()) / self.guest_stride();
-        D3D12_CPU_DESCRIPTOR_HANDLE {
-            ptr: start + slot * self.stride,
-        }
+        let ptr = match &self.native {
+            Some(native) => native.staging.handle(slot as u32, self.stride),
+            None => 0x3000_0000 + slot * self.stride,
+        };
+        D3D12_CPU_DESCRIPTOR_HANDLE { ptr }
     }
 
     fn inline_record(&self, address: usize) -> InlineDescriptor {
@@ -509,8 +541,15 @@ impl Arena {
         let Some(native) = &self.native else {
             return;
         };
+        // The visible heap is one piece; the CPU heaps may not be.
+        for (slot, length) in native.staging.runs(src, count) {
+            self.copy_run(native, slot, dst + (slot - src), length, retired);
+        }
+    }
+
+    fn copy_run(&self, native: &NativeArena, src: u32, dst: u32, count: u32, retired: &mut RetiredViews) {
         let from = D3D12_CPU_DESCRIPTOR_HANDLE {
-            ptr: native.staging_cpu_start + src as usize * self.stride,
+            ptr: native.staging.handle(src, self.stride),
         };
         let to = D3D12_CPU_DESCRIPTOR_HANDLE {
             ptr: native.visible_cpu_start + dst as usize * self.stride,

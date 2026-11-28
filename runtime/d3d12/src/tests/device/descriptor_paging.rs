@@ -398,3 +398,65 @@ fn inline_arena_uses_32_byte_guest_stride_on_64_byte_native_heap() {
     }
     drop(backing);
 }
+
+/// Heaps from a host that refuses CPU view heaps above `most` for memory,
+/// with every size it was asked for.
+fn chunks_under(count: u32, split: bool, most: u32) -> (Result<(u32, Vec<u32>)>, Vec<u32>) {
+    let mut asked = Vec::new();
+    let made = staging::create_chunks(count, split, |size| {
+        asked.push(size);
+        if size > most { Err(E_OUTOFMEMORY.into()) } else { Ok(size) }
+    });
+    (made, asked)
+}
+
+#[test]
+fn a_host_that_takes_the_whole_heap_gets_one_heap() {
+    let (made, asked) = chunks_under(2_097_152, true, 4_194_304);
+    assert_eq!(made.unwrap(), (2_097_152, vec![2_097_152]));
+    assert_eq!(asked, [2_097_152]);
+}
+
+#[test]
+fn a_refused_heap_is_halved_until_the_host_takes_it() {
+    // An Intel UHD (8086:a78b) refuses 2,097,152 CPU view descriptors and takes 1,048,576.
+    let (made, asked) = chunks_under(2_097_152, true, 1_048_576);
+    assert_eq!(made.unwrap(), (1_048_576, vec![1_048_576; 2]));
+    assert_eq!(asked, [2_097_152, 1_048_576, 1_048_576]);
+    // A count that is not a power of two ends in a shorter chunk.
+    let (made, _) = chunks_under(1_500_000, true, 400_000);
+    assert_eq!(made.unwrap(), (375_000, vec![375_000; 4]));
+    let (made, _) = chunks_under(1_000_001, true, 600_000);
+    assert_eq!(made.unwrap(), (500_000, vec![500_000, 500_000, 1]));
+}
+
+#[test]
+fn only_a_memory_refusal_of_a_splittable_heap_is_halved() {
+    let (made, asked) = chunks_under(2_097_152, false, 1_048_576);
+    assert_eq!(made.unwrap_err().code(), E_OUTOFMEMORY);
+    assert_eq!(asked, [2_097_152]);
+    let mut asked = 0;
+    let made: Result<(u32, Vec<()>)> = staging::create_chunks(2_097_152, true, |_| {
+        asked += 1;
+        Err(E_INVALIDARG.into())
+    });
+    assert_eq!((made.unwrap_err().code(), asked), (E_INVALIDARG, 1));
+    // A host out of memory is not asked forever.
+    let (made, asked) = chunks_under(2_097_152, true, staging::MIN_CHUNK - 1);
+    assert_eq!(made.unwrap_err().code(), E_OUTOFMEMORY);
+    assert_eq!(asked.last(), Some(&staging::MIN_CHUNK));
+    assert_eq!(asked.len(), 6);
+}
+
+#[test]
+fn slots_and_copies_stay_inside_their_chunk() {
+    let chunks = staging::Chunks { starts: vec![0x10_0000, 0x90_0000, 0x40_0000], chunk: 1000 };
+    assert_eq!(chunks.handle(0, 32), 0x10_0000);
+    assert_eq!(chunks.handle(999, 32), 0x10_0000 + 999 * 32);
+    assert_eq!(chunks.handle(1000, 32), 0x90_0000);
+    assert_eq!(chunks.handle(2500, 32), 0x40_0000 + 500 * 32);
+    assert_eq!(chunks.runs(10, 20).collect::<Vec<_>>(), [(10, 20)]);
+    assert_eq!(chunks.runs(990, 1020).collect::<Vec<_>>(), [(990, 10), (1000, 1000), (2000, 10)]);
+    assert_eq!(chunks.runs(1000, 1000).collect::<Vec<_>>(), [(1000, 1000)]);
+    assert_eq!(chunks.runs(5, 0).count(), 0);
+}

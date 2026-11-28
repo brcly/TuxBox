@@ -48,3 +48,12 @@ fn the_profile_line_marks_what_was_set() {
     let forced = describe(None, set.wave, SectionImport::Unknown(-2147467259), (32, 16), (false, false), set);
     assert_eq!(forced, "host profile: adapter=unknown wave=32-32 (set) section-import=unknown(0x80004005) descriptor-bytes=32/16 mesh=none (set) rays=none");
 }
+
+#[test]
+fn a_profile_can_cap_cpu_view_heaps() {
+    assert_eq!(parse_overrides("cpu-view-heap=1048576").unwrap().cpu_view_heap, Some(1_048_576));
+    assert_eq!(parse_overrides("wave=32").unwrap().cpu_view_heap, None);
+    for text in ["cpu-view-heap=0", "cpu-view-heap=", "cpu-view-heap=-1", "cpu-view-heap=1M"] {
+        assert!(parse_overrides(text).is_err(), "{text}");
+    }
+}
