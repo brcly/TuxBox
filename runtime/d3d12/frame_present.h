@@ -25,6 +25,8 @@ private:
     bool owns_title_ = false;
     bool check_size_ = false;
     bool splash_ = false;
+    // Whether a covered window was raised above the others (see raise_if_covered).
+    mutable bool raised_ = false;
     std::string sizing_;
 };
 }

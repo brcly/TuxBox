@@ -33,6 +33,62 @@ COLORREF screen_pixel(HDC screen, HWND window, POINT at) {
     return GetPixel(screen, at.x, at.y);
 }
 
+// Whether a visible window above `window` in the z-order holds `point`.
+// Walk the z-order rather than hit-test: WindowFromPoint passes over a STATIC
+// window, the check's own popup, as if it were not there. Cloaked windows and
+// click-through layered overlays draw nothing over the check.
+bool covered_at(HWND window, POINT point) {
+    using Attribute = HRESULT(WINAPI*)(HWND, DWORD, void*, DWORD);
+    static const auto attribute = reinterpret_cast<Attribute>(
+        GetProcAddress(LoadLibraryW(L"dwmapi.dll"), "DwmGetWindowAttribute"));
+    constexpr DWORD cloaked_attribute = 14;  // DWMWA_CLOAKED
+    for (HWND above = GetWindow(window, GW_HWNDPREV); above; above = GetWindow(above, GW_HWNDPREV)) {
+        RECT bounds{};
+        if (!IsWindowVisible(above) || IsIconic(above) || !GetWindowRect(above, &bounds) || !PtInRect(&bounds, point))
+            continue;
+        const auto extended = GetWindowLongPtrW(above, GWL_EXSTYLE);
+        if ((extended & WS_EX_LAYERED) && (extended & WS_EX_TRANSPARENT)) continue;
+        DWORD cloaked = 0;
+        if (attribute && SUCCEEDED(attribute(above, cloaked_attribute, &cloaked, sizeof(cloaked))) && cloaked) continue;
+        return true;
+    }
+    return false;
+}
+
+int covered(HWND window) {
+    RECT client{};
+    POINT origin{};
+    if (!window || !GetClientRect(window, &client) || !ClientToScreen(window, &origin)) return 0;
+    int count = 0;
+    for (const auto& at : samples)
+        count += covered_at(window, {origin.x + client.right * at.x / 100, origin.y + client.bottom * at.y / 100});
+    return count;
+}
+
+// Name what the screen shows at the sample points when they miss: another
+// window above the check's window explains colours its frame never had.
+std::string coverage(HWND window) {
+    if (!window) return {};
+    const bool topmost = GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST;
+    return " covered=" + std::to_string(covered(window)) + "/" + std::to_string(samples.size())
+        + (GetForegroundWindow() == window ? " foreground=1" : " foreground=0") + (topmost ? " topmost=1" : " topmost=0");
+}
+
+// A window this process shows while another process has the foreground
+// cannot take it, and Windows leaves it below the foreground window. The
+// popups the other modes sample are topmost; the title-style windows of the
+// owned and splash modes are not. When samples miss because another window
+// covers the check's window, raise it once, without taking the foreground.
+// Only on Windows itself: under Wine the check samples a private X server
+// where nothing covers it, and raising the window there made some samples
+// read black.
+void raise_if_covered(HWND window, bool& raised) {
+    static const bool wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+    if (raised || wine || !window || GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST || !covered(window)) return;
+    raised = true;
+    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
 std::string describe(const std::array<COLORREF, samples.size()>& pixels) {
     char text[80];
     std::snprintf(text, sizeof(text), " screen=%#lx/%#lx/%#lx/%#lx/%#lx", pixels[0], pixels[1], pixels[2],
@@ -66,7 +122,7 @@ DisplayCheck::DisplayCheck(UINT width, UINT height, const wchar_t* window_mode)
         measure(client, origin);
         ShowWindow(window_, SW_SHOW);
         UpdateWindow(window_);
-        if (!splash_shows(4000)) throw std::runtime_error("the package splash did not appear" + describe(sample()) + sizing_);
+        if (!splash_shows(4000)) throw std::runtime_error("the package splash did not appear" + describe(sample()) + sizing_ + coverage(window_));
         if (FindWindowW(L"TuxBox.Splash", nullptr)) throw std::runtime_error("the package splash opened a window of its own");
         return;
     }
@@ -132,6 +188,7 @@ bool DisplayCheck::shows(COLORREF corner, COLORREF center, ULONGLONG millisecond
         bool matched = true;
         for (size_t i = 0; i < pixels.size(); ++i) matched &= pixels[i] == (i == 4 ? center : corner);
         if (matched) return true;
+        raise_if_covered(window_, raised_);
         Sleep(16);
     } while (GetTickCount64() < deadline);
     return false;
@@ -161,6 +218,7 @@ bool DisplayCheck::splash_shows(ULONGLONG milliseconds) const {
             matched &= screen_pixel(screen, window_, {origin.x + 1, origin.y + 1}) == RGB(0, 0, 0);
         ReleaseDC(nullptr, screen);
         if (matched) return true;
+        raise_if_covered(window_, raised_);
         Sleep(16);
     } while (GetTickCount64() < deadline);
     return false;
@@ -259,6 +317,7 @@ void DisplayCheck::verify(ID3D12CommandQueue* queue, ID3D12Resource* source, UIN
             }
             return;
         }
+        raise_if_covered(window_, raised_);
         if (resubmits && GetTickCount64() >= resubmit_at) {
             submit();
             --resubmits;
@@ -269,6 +328,6 @@ void DisplayCheck::verify(ID3D12CommandQueue* queue, ID3D12Resource* source, UIN
     char message[180];
     std::snprintf(message, sizeof(message), "screen colors on frame %llu: %#lx/%#lx/%#lx/%#lx/%#lx, expected %#lx border and %#lx center",
                   token, pixels[0], pixels[1], pixels[2], pixels[3], pixels[4], corner, center);
-    throw std::runtime_error(message + sizing_);
+    throw std::runtime_error(message + sizing_ + coverage(window_));
 }
 }
