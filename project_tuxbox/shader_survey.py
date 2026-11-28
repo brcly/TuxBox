@@ -139,6 +139,18 @@ def totals(rows):
     return {host: dict(counts) for host, counts in out.items()}
 
 
+def size_and_time(rows):
+    """Per host: HLSL written and seconds spent by the translations that succeeded."""
+    out = {}
+    for host in HOSTS:
+        mine = [row for row in rows if row["host"] == host and row["status"] == "translated"]
+        sizes = [row.get("hlsl_bytes", 0) for row in mine]
+        times = [row.get("seconds", 0) for row in mine]
+        out[host] = {"hlsl_bytes": sum(sizes), "largest_bytes": max(sizes, default=0),
+                     "seconds": round(sum(times), 1), "slowest_seconds": max(times, default=0)}
+    return out
+
+
 def compare(before, after):
     """What `after` does differently from `before`, over the same requests."""
     old = {(row["request"], row["host"]): row for row in before}

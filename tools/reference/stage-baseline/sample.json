@@ -1,0 +1,885 @@
+{
+ "scope": "Request keys of a title's recorded shader requests, the stratum each was drawn from, and the longest driver compile logged for it in game runs. No shader bytes.",
+ "seed": "t14-stage-baseline-v1",
+ "sized_by": "d37f092c",
+ "strata": [
+  "<32K",
+  "32K-128K",
+  "128K-512K",
+  "512K-1.8M",
+  ">1.8M"
+ ],
+ "requests": [
+  {
+   "request": "1be3b2f91ef92b3abfd3dc3c3a03f53e50be2ac73347ab5c732b5418206c8274.dxbc",
+   "kind": "cs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 336916,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "9475f0b9fc075b2531d069c48132a4f25c40e5f25ca19e27660f6351bb48fdd5.dxbc",
+   "kind": "cs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 261434,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "f34f64ed25048daf6ef5d3a13908cf1b167f0d5788c782ef6a3caead72e666e7.dxbc",
+   "kind": "cs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 272018,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "24644ab5c5339d771686a0d80338f599eff5e5dee05af1f5ba6e0d0334edc1f7.dxbc",
+   "kind": "cs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 104850,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "af8dd921d21794eef129de477067b548652018d7990e431f71e9321bbfd840bf.dxbc",
+   "kind": "cs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 124727,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "b87864cd7d442da53947ebe501b82d54c56de08c8e47f541363ced116b81d27c.dxbc",
+   "kind": "cs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 100274,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "0fd5a201aefc8edfa750b0eeeb6771cb574d8fb241cca7fb1a48e908b6d14710.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1465399,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 510
+  },
+  {
+   "request": "1853eff4fec05c82a568288e25472d3e15ebf3bb1c70a91a15b4e826392560d9.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1619641,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 173
+  },
+  {
+   "request": "18bc547fccab601af9a508f63ecb24e4c8ac38d0096b6ce0e6264406f206322b.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1631717,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 243
+  },
+  {
+   "request": "214ec2b461ec3e4a5a46a0c33a243d89dccea4de318584c1abf7bc2d410f7d9f.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1646884,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 518
+  },
+  {
+   "request": "2495b462a134f4b999023137db8504705875d696c6abfefdc034cd465cb67d4b.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1483564,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 110
+  },
+  {
+   "request": "49aebde75536386bbd4edbbdd6ca960d569e47bde9839469ad389e8543f5ab2d.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1470890,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 122
+  },
+  {
+   "request": "4b52076894a17928ba005cb44631414fcb0dbf39c08654ea4e999e392b411ef0.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1563843,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 107
+  },
+  {
+   "request": "4c0c8a04c8293417d7d9bc3a85ae89616d8470c2d8a7c2c096b025587976bbcb.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 703069,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "6ac746ddf118d56806c2e60155cc7a885637457ab852ca6f67869629f052907f.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1595580,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 101
+  },
+  {
+   "request": "843ee28e7dbd24e0b11646ad3ac606dd36ef4ab4d90755e3ea88aa796148b50b.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1551434,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "adae18ef18dc5a589d47decc724c21c1a256f6abb2e1587d469ad1fc553ac17e.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 865979,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 264
+  },
+  {
+   "request": "c12420dba6dc28c940ebf3d0f6192c3aa65038c880ccaf9055ead4b904d91bc6.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1767099,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "ea9b0148fb55591083326d50ce1f70221926037ba8f52e92e1459a20c52d1b43.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1611748,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 173
+  },
+  {
+   "request": "f52b57f48cc5a749e626789ce7647fb0e6dbe27e27be803a2318e8ed2fa97041.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1603085,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 101
+  },
+  {
+   "request": "f7a2c34e39b18ebfb6aa44492dfd2ffc9a040aee8c654286d324554ad12ca63f.dxbc",
+   "kind": "cs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 1676340,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 137
+  },
+  {
+   "request": "1dfbb90421a32cd74cb587acfdc9f9f0885748057cb0e41d95275f2028de5b91.dxbc",
+   "kind": "cs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 18933,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "2ceee06b417efb5c03fe8a6fb4be9013375cff17c1622e4d887b6c41d2b29657.dxbc",
+   "kind": "cs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 22168,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "3427213e4187d56c9a8e5a58a8b91e50e94166ecb5ff5c87f7e1dad956dc96ff.dxbc",
+   "kind": "cs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 27078,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "188d1f9bc8626cea40a8ea9ac3219c547d86dd28953a6c139673e356588a615d.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 1871845,
+   "why": [
+    "tail"
+   ]
+  },
+  {
+   "request": "278409fa9327da79da8c28a0f45526ea146343a790681e28548b265d8094a1f1.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2154869,
+   "why": [
+    "tail"
+   ]
+  },
+  {
+   "request": "27d2c57c9ef78377cf922c270a5043fa23b0551a5002a422b10dd6c028d6600c.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 1835143,
+   "why": [
+    "tail"
+   ]
+  },
+  {
+   "request": "3c73853e67791e1de5654f7ea7288db5d08fb01483ea241d385fb8300555ca87.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2145260,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 246
+  },
+  {
+   "request": "7334c21fad672a7d5a6af954b79731dd8f5fad1eca9fbad983e67525b61b791b.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2071261,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 241
+  },
+  {
+   "request": "74b4984a424c8ce6b5ea7c66cf83e03e20c222b85e78df183be9cd748a2ef267.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2162704,
+   "why": [
+    "tail"
+   ]
+  },
+  {
+   "request": "795eda21cc14761ac27dde0fc922652cfc733469d3b3efd2e8055f3860d9ba10.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2160648,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 254
+  },
+  {
+   "request": "886dd317b3f04542356ea00e8d6b5bc02b8f3a4d40114f14efcd2b8e713da59e.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2083851,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "8daea05ecbb357ace59ea9efa6f0f3d9aec6d148822fea2db9777cd9dcd83963.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2148192,
+   "why": [
+    "tail"
+   ]
+  },
+  {
+   "request": "a22caddec22718269e643df7dd4903daa8decc2fa07b3e42b7b063f9ec2d08a0.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2148364,
+   "why": [
+    "tail"
+   ]
+  },
+  {
+   "request": "a640d8aa744d05d143fcfa0f97ea2aa3979d674cd88597b3c246fece4dfc70a4.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2558299,
+   "why": [
+    "logged slow driver compile"
+   ],
+   "logged_seconds": 1037
+  },
+  {
+   "request": "a9573be2f4f3b6a53c14208e43dda3a1e741826f82e9776e30f27900e1e28e95.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2080288,
+   "why": [
+    "tail"
+   ]
+  },
+  {
+   "request": "b413657f5e5c9135471c8e6fdb0a1161eed82c242c9b5be0cac92bf7ac729ecf.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2946987,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "b6baf448827494e6cf4f9afb4c237880af1d16160679cfc0440571b63b7a929f.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 1969431,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "bf0f50b75613441b3569452635f66579f69e53399d0e39b5d8c38368e8905b94.dxbc",
+   "kind": "cs",
+   "bucket": ">1.8M",
+   "hlsl_bytes_at_sampling": 2160588,
+   "why": [
+    "tail"
+   ]
+  },
+  {
+   "request": "00b8253ec4dcd07e00ab5eed4ea723989593588205f5f87a384039c84e76389c_258b3acf857dbef43c4bdcd9f61a9d321d616fbdae810746c386c2da2bca0dea_2ddf95baf93b7cac6b08ec78bf39b957393aa9739f473ced442513a59d59fdc8.link",
+   "kind": "link-ms",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 475562,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "0fa9a3ea999bed1a53b4627a1fa377529f819d8b8b54c9a80e40962e231f2c5e_57956d074d8e51c5fefff486e0a06ef8343690f3b698644e8cc3c31488e2a55c_eb0e1d8cf4a1ba4b38256089e5b52f6ae2a990cac379156393a1d2ee74aa0d6e.link",
+   "kind": "link-ms",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 161084,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "b8cd68069e5910bb16ce46d3669f138fc77f4b2c19224a509f87b568e88aeef7_82004d838bdfbe2cd2dd14be3bfb8193285b83c9b27b62eb6fe64306da1e9340_07d647c4b56cbd6865fc7b16001a3bb1124858c357b274d309985a2f7ad42567.link",
+   "kind": "link-ms",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 136179,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "4be1cba53587797aa7808316fdfda9bfa287b518646dac31ea3a6798ae9b48ff_0a3f892951f713778abfd6e876c5d294bae799ef5d5418301409c5be812f018d_513e62603f520a924120f934dc55473bb7e188b1fb8d07d6c573f4e26176fadd.link",
+   "kind": "link-ms",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 75623,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "8c4d65826f3bcda08786bcae86aad9a69a546c539e1b094de3eb443ec259da74_2f1267fdec3b511834e405928f6d562e360b0755bbf4c7501448f9fec6b54be1_f9e57fe244de4443e69293c67d313ca7ab7c2ee78fd6c779c5ce2ff14f1be0ba.link",
+   "kind": "link-ms",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 122092,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "9e3a935231fb7a50a34ad15cf19dc507b859383921ffd660ee4f3a3250674bb9_0bfaec20448439af6d6199f8384ee77a9c1b2015253389ebb325caf964842114_3d7cc5e0b9f01d4989fb46503e472a7ce2a02a9012eb0854d3bb7f6a8bf70efe.link",
+   "kind": "link-ms",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 74772,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "94ce0bb9e6c4b41a33388dacaab0355eda7fcb85007b455c076386de6cdc6973_bc73c839208f58ec4d607a2d19d874156efc11dac9b85bea5ae0de8c963e3b35_d67dc893a2ca2007255aa1224b9f779a3a917c85f0a3cc6357868526f4056e0a.link",
+   "kind": "link-ms",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 562809,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "9dc793ad67e973b78d0d06b5a28a2455f8868dfdc11ff9b1117d5cfdfa7cd847_368ede4cdcb0d2349dfb1bbd7bc012c995d24d35990e15d6faf47f68d41a4c2f_95bb819891d90355ab5653388d940dd4523a477420a8e9d012e27931f8787739.link",
+   "kind": "link-ms",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 587133,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "c159f6c980f4a263c10765f92c667d4a8201e1d62288e8ba37d41c1a751f5daa_ab695707450ea77975941db0586302f67c53c6ddb09af591c9d75c22a4aa5e94_8ce923a04cd84e5a22996c7c919a4dac6c6d2cf03abdbba38cd8ece9278f52f6.link",
+   "kind": "link-ms",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 581253,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "1c09e8ce3bbd58c247a9cf33d40220f02488a48e28d63f982fa316056f02b9bb_4c90e8e7536ce82d42059a4c8ea854b9de443a58b61570d04313abcf5af164e0_d6656bfae4b9a14c47dda99c033335a5439589cc0f73b63d5b01463f9c30c9c4.link",
+   "kind": "link-ms",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 25616,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "50c1f54c2846ee876662da51f50d694ad0fc8a3dabc916439ad4e4d297fe1a6f_ff93144e0813dd66b5906d29e18bb4f062f7ecb62c897e4feed80ad7eca00926_d1d6754536b6b4669b8439ae9853d609face2cd3b4219fb3f4d33c5de972df2b.link",
+   "kind": "link-ms",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 25595,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "5c37d4d8f6a0c848e9df1ef2af1f2a9df65d6861769ef2e1e758d2122bf4f81c_f1b9110d003c1773542c5b6372bce239c849a664f626b2e538c7a9f4b63b6a11_e2832d2e06d1714ee14a274014203a8dee7be0dd3ded7e6a7585e13830d4edf4.link",
+   "kind": "link-ms",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 28880,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "21530330a60c346be3650b5118146c226ea7b71156bfa582aa9428f66fa391be_34f33978a2846b550b93d992b3fb4bab16f460bfab240335b297357b50a4a4ce_2925f40f46a56c5a521b89f1a33ecf6b12479c80a3c8a7205fa2ec2ebee2839b.link",
+   "kind": "link-vs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 159662,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "26b5511d89f10f8229e752a467ae6568a35d9b51225afedcb5cf02cad84a3981_f7b15c7d2f2856c89a2c70e4491ad648a2038d80ef00b0fa6b58af39a161384b_b56761f9c4a7b962cf0709a407bd880219dedabdef8223387f247c2cd2a49458.link",
+   "kind": "link-vs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 136530,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "7cd70bddf671024f2ad1e7d3376de91534979201e55a0c376c81350b5ad5dd5f_c2d7b34c2899b07ae617f2394a63793b05755794e242d81d545801c9a10b31c8_276cf4c93fd181768d21461a07dad68a69534c41139b4ed874824bd34f5c73ca.link",
+   "kind": "link-vs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 196289,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "28e04e71e72c9fbf49172269ec7ce6334017316f846798548fece57e0aa1cafa_28f2d0d243438a5366a316225e9c3dd77451231d325d3399ce7f8d73df87a5dd_51f22e07d58b57a31ed1deb5a32ee0581e6c8f9133ccb79c118d037e85937fa6.link",
+   "kind": "link-vs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 52658,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "5ac0573ca35050df614a5821d49f62f8b17fca8f955ad74c13aae0b48323cbc3_5a612f976da0c0bcf4bedc3638305219e656ab073373adef14ee46f706ab7f83_d5f817483cd21b628f05dd11d588ce8ec6d97b1c1bfd09fc2e4513fc4a67bfa1.link",
+   "kind": "link-vs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 88673,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "66e4431d5fd9f0b40e3c57f156b8781c5b422866bbd0845ddb36da67661df0de_fa28346eddef6b2e40c3978d0c99b916bf6a3672a583b01e730a6e17f3223dc1_1c6c3a7264fe7edfd3cef7edd69c5a0a446a96b5bbeeda688d84374383b75022.link",
+   "kind": "link-vs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 46573,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "0a0d0447795126db43844bc474f98a273c991204ae58db6074d139c50c733078_7ca54aef4ff7e3b05ab239a7acf061c852e1b0fd9617f79fbabc1e4dcc8f7cca_21e54a84ea172b2390655e0ff25811322564f9d5ab1edf4b68535f135ed72a2c.link",
+   "kind": "link-vs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 14985,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "a34e6141af82bb78683c50660ed4f415738de884ded63f92317cc27f91ba11b2_44c8efd2d39b0063da7bd59183bde96e72a82cfa571f4491fd3abc0e854629b0_87a5dbf3a0854e4ee86e3709d5966fe86bef85086bb8984f2bea79f0d24727d9.link",
+   "kind": "link-vs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 20196,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "b8508183619f86e6656240b89a24c6243ff27565eb95b8c9acc3115a4ec58fcf_82311fec54dcbb0512679a215af41cdfa3a86a6996365b261898963759596a2c_21e54a84ea172b2390655e0ff25811322564f9d5ab1edf4b68535f135ed72a2c.link",
+   "kind": "link-vs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 11669,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "153603cbc9728b135f01e17079a544278e6ce96507911883cb70d753eddf461b.dxbc",
+   "kind": "ms",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 142854,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "4807a7cbfb7c193863d117baef5d023134ba7351f40fbfb79af824b3a02cec1f.dxbc",
+   "kind": "ms",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 486610,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "6f372ced2a23067151cec88078fed9c58a2176332bba63c96f15e1b084f88aba.dxbc",
+   "kind": "ms",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 192337,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "4737c80a20d91494e243dfdb4344bd5111af8588eb3927f1cd8a7b454600fa90.dxbc",
+   "kind": "ms",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 92636,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "6dfd9a1beb093c9d5b5316fbe2643ebeaccd75ee80c15a21d125949065f68580.dxbc",
+   "kind": "ms",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 84633,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "976fdf4f9171227fbff5e26ed455c5be3a71875d16440f1c11222779e9389d7f.dxbc",
+   "kind": "ms",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 113002,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "5551b75adb4f26503f57211ba12c2a2098dc5ca6632b4af8c17276a2014a5141.dxbc",
+   "kind": "ms",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 573466,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "87c40a4ee030d91b2daeb039f0704da195ca357ebb36cffda8d4fbb13412a0ad.dxbc",
+   "kind": "ms",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 556383,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "bcbf78a1269bcfa805be97df11048fb1430b8c69f5e7b98ae768db04ed6b696c.dxbc",
+   "kind": "ms",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 531771,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "864a51f0a423e81d25c86fd9e23849bb4ef9620dd998a699a140666e06243625.dxbc",
+   "kind": "ms",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 25466,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "92fe03a379721b94dd9d149d5f71228ed1ec7e9c8a591c09e0c2af50a5148404.dxbc",
+   "kind": "ms",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 29582,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "e66e8a17a139458cb53ad0aa6a2e9daf5c01633fc1ca2d867ae68dbd0a8cac0f.dxbc",
+   "kind": "ms",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 30445,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "0db1d2d7278cddf77c1309846da16d42a65b94ea51ca2b8eaf25abd0387d5856.dxbc",
+   "kind": "ps",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 180158,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "1fcc0630793b40e9de1d15a08b52db9ed189e143f83575bac47ba53e86f69d02.dxbc",
+   "kind": "ps",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 484455,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "6a53b56d6ae80f8a9fb02f5120a9993a9d4329e8ab4d7d686f07e67c8127c9a5.dxbc",
+   "kind": "ps",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 192296,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "279afc9fe3b21242f88971bb60b03855bbcaee8a4dbb4f9944f458c0054a640a.dxbc",
+   "kind": "ps",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 85602,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "4022a799c4f94dcca7844f5b42dfb7812433c2815d3b46f60d3b76a11d80acf7.dxbc",
+   "kind": "ps",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 33774,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "fc91633f28c0c3d57c48e57e67d5b52326fb026336dc11ecf6d06d0680d19904.dxbc",
+   "kind": "ps",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 95337,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "8e3a17ed02af77ca0bce99a6a3fce8b32df03884ef3789d0533f8e7b593644dd.dxbc",
+   "kind": "ps",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 553192,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "caa58735cfee85d85f3673979880fd9cf44103c96d6095560e2cba68c4545c05.dxbc",
+   "kind": "ps",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 668095,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "e3c0dbbc762d890d4ad44de59b73691bc4d3e69d22460089870d76f09bc193d8.dxbc",
+   "kind": "ps",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 527801,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "cf5cdffbd4a0ace5dcb398eb93d2a22def4b7a427e58824227ed425042d5843d.dxbc",
+   "kind": "ps",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 15553,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "f2d6faa7b3bfe2057122f4ba3d8b4d7e71afc00c7369dd0bd2371bab97c8f4be.dxbc",
+   "kind": "ps",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 11847,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "ffd102b34ab670b9036df66600e7f22ca867d87d5242921c0b72201cf845d38d.dxbc",
+   "kind": "ps",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 28988,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "41837113bf558ab530ad1b381cbc2e2f49f1be27783bfa6c8f05bfdf42714e30.dxbc",
+   "kind": "vs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 131572,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "53d846a6002d37d35dd101f230d761d86a942a24812316f92407bf38b6cc92f8.dxbc",
+   "kind": "vs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 201689,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "f73736a2726525d20e08c1016e94822d1f62c095bf9951c6bd5f22e22a1251ad.dxbc",
+   "kind": "vs",
+   "bucket": "128K-512K",
+   "hlsl_bytes_at_sampling": 142824,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "412c672b5da631931b5fce65bf88dd5dab21106349d86508223fd74b2240caa8.dxbc",
+   "kind": "vs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 53723,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "b6682226a0dd7ec3e438841026f665600afa3ac959d4731423ab7e897de27e89.dxbc",
+   "kind": "vs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 55176,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "d5deca2723806ad098043488dcab9a1c588ca4fc46502933fa2fbf16a1feeae5.dxbc",
+   "kind": "vs",
+   "bucket": "32K-128K",
+   "hlsl_bytes_at_sampling": 74672,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "87666df927c24ce1f4ca1610565be5d2fd5c80bf738e4bd1a63e167581859ec0.dxbc",
+   "kind": "vs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 528223,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "e31bbdd2c4476c9451b8c7e41a0f79547ac6867fe909ed26944e5545be00b774.dxbc",
+   "kind": "vs",
+   "bucket": "512K-1.8M",
+   "hlsl_bytes_at_sampling": 528337,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "1270c295a222f94164e0acf249a04650f498b8f13f86233e77de4628dd4a6311.dxbc",
+   "kind": "vs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 26257,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "995634fa5737714e26312351c886be638d65b313374d3822147a51a7b1021171.dxbc",
+   "kind": "vs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 7304,
+   "why": [
+    "stratum"
+   ]
+  },
+  {
+   "request": "e944b152d391546ceb52e396a7143ec5be161954d40b0baa09a60ff200283938.dxbc",
+   "kind": "vs",
+   "bucket": "<32K",
+   "hlsl_bytes_at_sampling": 7477,
+   "why": [
+    "stratum"
+   ]
+  }
+ ]
+}

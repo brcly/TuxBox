@@ -1,0 +1,11 @@
+{
+  "file_format_version": "1.2.0",
+  "layer": {
+    "name": "VK_LAYER_TUXBOX_pipeline_timing",
+    "type": "GLOBAL",
+    "library_path": "./pipeline_timing.so",
+    "api_version": "1.4.0",
+    "implementation_version": "1",
+    "description": "Time each driver pipeline compile for the TuxBox per-stage baseline"
+  }
+}

@@ -38,7 +38,7 @@ Put the paths in `build/shader-harness.json`, which Git ignores:
 | Execute | Runs a sample of recorded compute shaders, as both builds translate them, over the same generated resources on each card, and compares what they write ([below](#executing-recorded-shaders)) | a shader computes something different, or ran before and no longer runs |
 | Coverage | Lists instructions the recorded shaders use that no GPU check program holds, and the largest refusals | never; it shows where to add tests |
 
-The report is `report.md` in the run folder under `build/shader-harness/`, with request names and details in `report.json`. Neither holds shader bytes or HLSL. It names any of AMD and NVIDIA that did not run.
+The report is `report.md` in the run folder under `build/shader-harness/`, with request names and details in `report.json`. Neither holds shader bytes or HLSL. It gives the HLSL size and translation time of both builds for each host, and names any of AMD and NVIDIA that did not run.
 
 Options for common cases:
 
@@ -76,6 +76,23 @@ Seeded values stay small so that a count or index read from them can't run away:
 
 Not executed, with the reason in the report: programs that index the descriptor heap directly (about half of ProjectScarlett's compute programs), unbounded descriptor arrays, ray tracing scenes, multisampled textures, and translations over 1 MiB. Generated inputs reach only some paths of a program. Some programs leave every output as seeded, and the report counts those. A change can alter a path these inputs don't take and still pass. On an RTX 4070, a translator that emitted `min` for `v_max_f32` changed 28 of the 77 programs that ran from a sample of 200. Of those 28, 8 wrote different results and 20 did not.
 
+## Per-stage baseline
+
+[`tools/stage_baseline.py`](../tools/stage_baseline.py) measures what each step from a recorded console shader to a ready pipeline costs, for a fixed sample of requests. It uses the same configuration file, and the cards listed in `adapters`.
+
+```sh
+python tools/stage_baseline.py run
+```
+
+| Stage | How it is measured |
+| --- | --- |
+| Translator, DXC, DXV | Shader preparation's own code compiles each request in a fresh cache, so DXC's first-boot fallbacks count. Each tool runs behind [a probe](../tools/reference/stage-baseline/probe.py) that records its wall time, CPU time and peak resident memory. Compute programs are measured for 64-lane and 32-lane hosts |
+| vkd3d-proton, the driver | [A guest](../tools/reference/stage-baseline/guest.cpp) creates one compute pipeline per program on vkd3d-proton, with the driver's caches off (`__GL_SHADER_DISK_CACHE=0`, `MESA_SHADER_CACHE_DISABLE=true`, `RADV_DEBUG=nocache`, `VKD3D_SHADER_CACHE_PATH=0`). [A Vulkan layer](../tools/reference/stage-baseline/layer.c) times each `vkCreateComputePipelines` inside the call; the rest of the call is vkd3d-proton's DXIL to SPIR-V conversion |
+
+The sample, [`sample.json`](../tools/reference/stage-baseline/sample.json), holds request keys only: three requests from each stage and HLSL size, eight more of the programs over 1.8 MB, and sixteen of the slowest driver compiles logged in game runs. `sample --survey FILE --sized-by COMMIT --logs GAME-LOGS` chooses a new one; change it only on purpose, since results are compared against it. The report is `report.md` in the run folder under `build/stage-baseline/`, with every measurement in `report.json`. The run folder also holds the translated programs for the GPU stage; neither report holds shader bytes or HLSL.
+
+Single parts: `cpu --output RUN`, then `gpu RUN --name NAME --adapter VVVV:DDDD --prefix PREFIX` for each card, then `report RUN`. A run folder that stopped part-way is resumed. The GPU stage does not reproduce the title's root signatures: each program gets one built from its own bindings, in descriptor tables. Graphics pipelines are not timed on the GPU.
+
 ## The instruction inventory
 
 [INSTRUCTIONS.md](INSTRUCTIONS.md) lists every RDNA 2 instruction with what the translator does with it alone, which cards a GPU check ran it on, and how many recorded shaders use it. It is generated from three files in the repository, and the Rust and Python tests fail when any of them is out of date.
@@ -92,4 +109,4 @@ The translator must refuse an instruction it can't translate. The inventory's te
 
 ## What a pass does not show
 
-Recorded shaders are translated and compiled, and a sample of compute shaders is executed over generated inputs. Their outputs are compared between builds and between cards, not with a console, so a program that was already wrong stays wrong. Graphics stages are not executed. The GPU checks run synthetic programs: when you add or fix an instruction, add it to one of them, and use the coverage table to find instructions that have none. A check program holding an instruction does not prove every operand form or lane state was tested. The harness does not run or time the drivers' own pipeline builds.
+Recorded shaders are translated and compiled, and a sample of compute shaders is executed over generated inputs. Their outputs are compared between builds and between cards, not with a console, so a program that was already wrong stays wrong. Graphics stages are not executed. The GPU checks run synthetic programs: when you add or fix an instruction, add it to one of them, and use the coverage table to find instructions that have none. A check program holding an instruction does not prove every operand form or lane state was tested. The harness does not run or time the drivers' own pipeline builds; the [per-stage baseline](#per-stage-baseline) does, for its sample.

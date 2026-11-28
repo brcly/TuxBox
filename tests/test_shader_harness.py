@@ -134,6 +134,19 @@ class Report(unittest.TestCase):
         self.assertIn("**Unstable**", text)
         self.assertIn("1 executed requests differ between the cards", text)
 
+    def test_the_report_gives_hlsl_size_and_translation_time_per_host(self):
+        rows = [row("a", "translated", hlsl_bytes=1 << 20, seconds=1.5),
+                row("b", "translated", profile="ps_6_0", hlsl_bytes=1 << 19, seconds=0.25),
+                row("c", "refused", seconds=9.0),
+                row("a", "translated", "wave32", hlsl_bytes=3 << 20, seconds=2.0)]
+        sizes = survey.size_and_time(rows)
+        self.assertEqual(sizes["wave64"], {"hlsl_bytes": 3 << 19, "largest_bytes": 1 << 20, "seconds": 1.8,
+                                           "slowest_seconds": 1.5})
+        text = harness.render({"baseline": "a", "head": "b", "dirty": False, "problems": [],
+                               "sizes": {"before": sizes, "after": survey.size_and_time(rows[:1])}})
+        self.assertIn("| wave64 | 1.5 | 1.0 | 1024 | 1024 | 1.8 | 1.5 | 1.50 | 1.50 |", text)
+        self.assertIn("| wave32 | 3.0 | 0.0 | 3072 | 0 | 2.0 | 0 | 2.00 | 0.00 |", text)
+
 
 if __name__ == "__main__":
     unittest.main()

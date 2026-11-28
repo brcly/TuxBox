@@ -246,6 +246,18 @@ def render(report):
             if comparison["reasons"][kind]:
                 lines += ["", f"{title}:", ""] + [f"- {n} × {reason}" for reason, n in comparison["reasons"][kind][:8]]
         lines.append("")
+    if "sizes" in report:
+        before, after = report["sizes"]["before"], report["sizes"]["after"]
+        lines += ["Size and time of the translations, run in parallel (time is indicative only):", "",
+                  "| Host | HLSL MiB before | after | Largest KiB before | after | Translation s before | after "
+                  "| Slowest s before | after |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        for host in before:
+            a, b = before[host], after[host]
+            cells = [host, f"{a['hlsl_bytes'] / (1 << 20):.1f}", f"{b['hlsl_bytes'] / (1 << 20):.1f}",
+                     f"{a['largest_bytes'] >> 10}", f"{b['largest_bytes'] >> 10}", a["seconds"], b["seconds"],
+                     f"{a['slowest_seconds']:.2f}", f"{b['slowest_seconds']:.2f}"]
+            lines.append("| " + " | ".join(map(str, cells)) + " |")
+        lines.append("")
     if "compile" in report:
         c = report["compile"]
         lines += ["## DXC and DXV", "", f"{c['compiled']} of {c['selected']} changed or recovered programs compiled; "
@@ -304,7 +316,8 @@ def render(report):
               "- Executed shaders run over generated inputs on a small grid, not the title's own; their outputs are "
               "compared between builds and cards, not with a console.",
               "- Programs that index the descriptor heap directly or read a ray tracing scene are not executed.",
-              "- Drivers' own pipeline builds are not run or timed.", ""]
+              "- Drivers' own pipeline builds are not run or timed here; `tools/stage_baseline.py` times them "
+              "for a fixed sample.", ""]
     return "\n".join(lines)
 
 
@@ -417,6 +430,7 @@ def full_run(args, config):
         say(f"survey: {side}")
         surveys[side] = run_survey(build, config, folder / f"survey-{side}.jsonl", args.jobs)
     comparison = report["comparison"] = survey.compare(surveys["before"], surveys["after"])
+    report["sizes"] = {side: survey.size_and_time(rows) for side, rows in surveys.items()}
     problems += survey.blocking(comparison, identical=args.identical)
     moved = determinism(builds["after"], surveys["after"], config, args.repeat, args.jobs)
     if moved:
