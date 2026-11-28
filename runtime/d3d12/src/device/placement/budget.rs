@@ -5,8 +5,7 @@
 //! when it is full the driver faults. A sampled image first used when the card
 //! is nearly full gets system memory instead: slower to sample, but the
 //! adapter keeps room for the images the GPU writes and for the driver.
-use super::{Alias, Images, lock, residency::Place, upload};
-use std::collections::BTreeMap;
+use super::{Images, Texture, lock, overlap, residency::Place, upload};
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -134,26 +133,50 @@ impl Tally {
     }
 }
 
-fn textures(images: &BTreeMap<u64, Vec<Alias>>) -> String {
+fn image(texture: &Texture, bytes: u64) -> overlap::Image {
+    let desc = &texture.desc;
+    overlap::Image {
+        address: texture.address,
+        size: texture.size,
+        bytes,
+        format: desc.Format.0,
+        shape: (desc.Dimension.0, desc.Width, desc.Height, desc.DepthOrArraySize),
+        mips: texture.mips.iter().map(|mip| (mip.slice, mip.level, mip.source.start, mip.source.end)).collect(),
+    }
+}
+
+/// The texture line, and what the images with adapter memory repeat.
+fn textures(live: &[Arc<Texture>]) -> (String, overlap::Report, String) {
     let [mut unbacked, mut card, mut system, mut committed]: [Tally; 4] = Default::default();
     let mut guest = Vec::new();
-    for texture in images.values().flatten().filter_map(|alias| alias.texture.upgrade()) {
+    let mut backed = Vec::new();
+    let mut partial = Tally::default();
+    for texture in live {
+        let left_out = texture.residency.left_out();
+        if left_out != 0 {
+            partial.add(left_out);
+        }
         match texture.residency.place() {
             Place::Unbacked(bytes) => unbacked.add(bytes),
             Place::Card(bytes) => {
                 card.add(bytes);
                 guest.push(texture.range());
+                backed.push(image(texture, bytes));
             }
-            Place::System(bytes) => system.add(bytes),
+            Place::System(bytes) => {
+                system.add(bytes);
+                backed.push(image(texture, bytes));
+            }
             Place::Committed => committed.add(texture.size),
         }
     }
     let spans: u64 = guest.iter().map(|range| range.end - range.start).sum();
     let distinct = covered(&mut guest);
-    format!(
+    let line = format!(
         "unbacked {}, card {} (title ranges {} MiB, {} MiB distinct), system {}, committed {}",
         unbacked.text(), card.text(), spans >> 20, distinct >> 20, system.text(), committed.text()
-    )
+    );
+    (line, overlap::classify(&mut backed), partial.text())
 }
 
 /// XMem's count of the physical pages the title holds.
@@ -206,7 +229,9 @@ impl Ledger {
             )
         };
         let mib = |bytes: Option<u64>| bytes.map_or_else(|| "unknown".into(), |b| format!("{} MiB", b >> 20));
-        let textures = textures(&lock(&images.0));
+        // Releasing an image takes this lock, so none may be dropped under it.
+        let live: Vec<_> = lock(&images.0).values().flatten().filter_map(|alias| alias.texture.upgrade()).collect();
+        let (textures, repeats, partial) = textures(&live);
         crate::diagnostics::log(&format!(
             "memory ledger: card {}, adapter system memory {}, upload staging {} MiB, title pages {}, process commit {}",
             segment(DXGI_MEMORY_SEGMENT_GROUP_LOCAL),
@@ -216,6 +241,9 @@ impl Ledger {
             mib(committed_bytes()),
         ));
         crate::diagnostics::log(&format!("texture ledger: {textures}"));
+        crate::diagnostics::log(&format!("overlap ledger: {}", repeats.text()));
+        crate::diagnostics::log(&format!("overlap formats: {}", repeats.top_pairs(8)));
+        crate::diagnostics::log(&format!("mip ledger: images missing large mips {partial}"));
     }
 }
 

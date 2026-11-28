@@ -57,6 +57,7 @@ The launcher sets these for a Proton or Wine launch. A value you set yourself is
 | `TUXBOX_RESIDENT_PIPELINES` | `4096` | Graphics pipeline streams kept resident. Later ones are compiled, so the driver caches them, then released and rebuilt at their first bind, which saves host memory. `all` keeps every one |
 | `TUXBOX_LAZY_TEXTURES` | on | Placed textures get graphics memory when GPU work first uses them; `0` gives each its memory when it is created |
 | `TUXBOX_VRAM_RESERVE_MIB` | `1536` | Video memory that sampled placed textures leave free; past it a texture gets system memory at first use. `off` keeps every texture on the card. Needs `TUXBOX_LAZY_TEXTURES` |
+| `TUXBOX_PARTIAL_MIPS` | on | A sampled 2D placed texture that the next texture starts inside gets memory only for the mips ending before it; `0` gives every texture its whole chain. Needs `TUXBOX_LAZY_TEXTURES` |
 | `TUXBOX_NULL_PIPELINES` | on | `0` fails unsupported pipelines instead of giving empty stand-ins |
 | `TUXBOX_PROGRESS_OVERLAY` | `auto` | `always` or `0` for the progress panel |
 | `TUXBOX_PROGRESS_OVERLAY_POS` | `tr` | `tl`, `tr`, `bl` or `br` |

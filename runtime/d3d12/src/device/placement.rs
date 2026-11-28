@@ -3,6 +3,8 @@ mod budget;
 mod descriptors;
 mod digest;
 mod guarded_copy;
+mod mips;
+mod overlap;
 mod publication;
 mod readback_stats;
 mod residency;
@@ -373,7 +375,10 @@ impl Texture {
         scratch: &mut Vec<u8>,
     ) -> Result<()> {
         let mut contents = lock(&self.contents);
-        for (level, mip) in self.mips.iter().enumerate() {
+        // Mips without memory are left for the mapping that gives them some.
+        // Only single-slice chains leave any out, so the index is the level.
+        let held = self.residency.first() as usize;
+        for (level, mip) in self.mips.iter().enumerate().skip(held) {
             let Some(bytes) = self.read_mip(mip, scratch)? else {
                 contents.previous[level] = None;
                 continue;
@@ -494,7 +499,7 @@ impl PlacementMemory {
                     && unsafe { write.published.GetCompletedValue() } < write.tick
             })
         });
-        submissions.transfer.back(device, &textures)?;
+        submissions.transfer.back(device, &self.images, &textures)?;
         submissions.transfer.refresh(device, &textures)
     }
 }
@@ -746,7 +751,10 @@ pub(crate) unsafe fn submit(
     }
     let transfer = &mut submission.transfer;
     // Every image this batch reads, writes or copies gets its memory first.
-    transfer.back(&device.native, textures)?;
+    for texture in writes.iter() {
+        texture.residency.need_whole();
+    }
+    transfer.back(&device.native, &placements.memory.images, textures)?;
     transfer.refresh(&device.native, &refresh)?;
     let required = textures
         .iter()

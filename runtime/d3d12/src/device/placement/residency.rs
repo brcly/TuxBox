@@ -4,11 +4,13 @@
 //! them, and many it never draws with at all. A committed image for each holds
 //! graphics memory from the moment the view exists (#292). A reserved image
 //! holds none until its tiles are mapped, which happens on the upload queue
-//! ahead of the first batch, copy or upload that touches it. Unmapped tiles are
-//! never read: every GPU use of a placed texture passes through `submit` or a
-//! CPU write flush, and both back the image first.
-use super::{Texture, budget, lock};
-use std::sync::OnceLock;
+//! ahead of the first batch, copy or upload that touches it: every GPU use of a
+//! placed texture passes through `submit` or a CPU write flush, and both back
+//! the image first. Only the mips the title holds are mapped (see `mips`); a
+//! read of another returns zero.
+use super::{Images, Texture, budget, lock, mips};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::Result;
@@ -19,20 +21,60 @@ const TILE: u64 = D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES as u64;
 /// heap, so queued work that names a reserved image has to hold both.
 pub(super) struct Held {
     _image: ID3D12Resource,
-    _heap: Option<ID3D12Heap>,
+    _heaps: Vec<ID3D12Heap>,
 }
 
 pub(super) enum Residency {
     /// Created with its own memory.
     Committed,
-    /// Reserved; `backing` is set once its tiles are mapped.
-    Reserved { tiles: u32, backing: OnceLock<Backing> },
+    /// Reserved; `backing` is set once tiles are mapped.
+    Reserved {
+        tiles: u32,
+        backing: Mutex<Option<Backing>>,
+        /// Set once GPU work writes the image, which then needs every mip.
+        whole: AtomicBool,
+    },
 }
 
-/// The heap under a reserved image, and whether it is in system memory.
+/// The heaps under a reserved image: one, and one more each time larger mips
+/// are mapped later.
 pub(super) struct Backing {
-    heap: ID3D12Heap,
+    heaps: Vec<ID3D12Heap>,
+    /// The first mip with memory.
+    first: u32,
+    /// Tiles with memory.
+    tiles: u32,
     system: bool,
+}
+
+/// One run of tiles to map: a standard mip as a box, or the packed tail.
+#[derive(Debug, PartialEq)]
+pub(super) struct Region {
+    pub(super) subresource: u32,
+    pub(super) tiles: u32,
+    pub(super) shape: Option<(u32, u16, u16)>,
+}
+
+/// The tiles that take an image from mips `mapped` onwards to mips `first`
+/// onwards. `standard` holds each unpacked mip's size in tiles and `tail` the
+/// packed mips' tile count, which are mapped with the first request.
+pub(super) fn regions(standard: &[(u32, u16, u16)], tail: u32, first: u32, mapped: Option<u32>) -> Vec<Region> {
+    let count = standard.len() as u32;
+    let end = mapped.map_or(count, |mapped| mapped.min(count));
+    let mut regions: Vec<_> = (first.min(count)..end)
+        .map(|subresource| {
+            let (width, height, depth) = standard[subresource as usize];
+            Region {
+                subresource,
+                tiles: width * u32::from(height) * u32::from(depth),
+                shape: Some((width, height, depth)),
+            }
+        })
+        .collect();
+    if mapped.is_none() && tail != 0 {
+        regions.push(Region { subresource: count, tiles: tail, shape: None });
+    }
+    regions
 }
 
 /// Where an image's memory is, with its size where the image was reserved.
@@ -119,7 +161,7 @@ pub(super) fn reserve(
     }
     CREATED_BYTES.fetch_add(u64::from(tiles) * TILE, Ordering::Relaxed);
     report("reservation", CREATED.fetch_add(1, Ordering::Relaxed) + 1);
-    Some((native, Residency::Reserved { tiles, backing: OnceLock::new() }))
+    Some((native, Residency::Reserved { tiles, backing: Mutex::default(), whole: AtomicBool::new(false) }))
 }
 
 /// A heap of `bytes` for a reserved image, on the card or in system memory.
@@ -154,38 +196,117 @@ fn heap(device: &ID3D12Device, bytes: u64, system: bool) -> Result<ID3D12Heap> {
     created.ok_or_else(|| windows::Win32::Foundation::E_POINTER.into())
 }
 
+/// The tile shapes of an image's unpacked mips and the packed tail's tiles.
+fn tiling(device: &ID3D12Device, native: &ID3D12Resource) -> (Vec<(u32, u16, u16)>, u32) {
+    let mut packed = D3D12_PACKED_MIP_INFO::default();
+    // SAFETY: the description is a COM result of a live resource.
+    let mut count = u32::from(unsafe { native.GetDesc() }.MipLevels);
+    let mut mips = vec![D3D12_SUBRESOURCE_TILING::default(); count as usize];
+    // SAFETY: `mips` holds the `count` entries asked for.
+    unsafe {
+        device.GetResourceTiling(native, None, Some(&mut packed), None, Some(&mut count), 0, mips.as_mut_ptr());
+    }
+    mips.truncate(count.min(u32::from(packed.NumStandardMips)) as usize);
+    let standard = mips.iter().map(|mip| (mip.WidthInTiles, mip.HeightInTiles, mip.DepthInTiles)).collect();
+    (standard, packed.NumTilesForPackedMips)
+}
+
 impl Residency {
     pub(super) fn place(&self) -> Place {
         match self {
             Self::Committed => Place::Committed,
-            Self::Reserved { tiles, backing } => {
-                let bytes = u64::from(*tiles) * TILE;
-                match backing.get() {
-                    None => Place::Unbacked(bytes),
-                    Some(Backing { system: false, .. }) => Place::Card(bytes),
-                    Some(Backing { system: true, .. }) => Place::System(bytes),
+            Self::Reserved { tiles, backing, .. } => {
+                match lock(backing).as_ref() {
+                    None => Place::Unbacked(u64::from(*tiles) * TILE),
+                    Some(backing) => {
+                        let bytes = u64::from(backing.tiles) * TILE;
+                        if backing.system { Place::System(bytes) } else { Place::Card(bytes) }
+                    }
                 }
             }
         }
     }
 
-    /// Map a reserved image's tiles onto a new heap through `queue`, in system
-    /// memory if `room` has no space for it. Returns whether it mapped anything.
+    /// The first mip with memory; 0 for an image not yet backed.
+    pub(super) fn first(&self) -> u32 {
+        match self {
+            Self::Committed => 0,
+            Self::Reserved { backing, .. } => lock(backing).as_ref().map_or(0, |backing| backing.first),
+        }
+    }
+
+    /// Reserved bytes left without memory in a backed image.
+    pub(super) fn left_out(&self) -> u64 {
+        match self {
+            Self::Committed => 0,
+            Self::Reserved { tiles, backing, .. } => lock(backing)
+                .as_ref()
+                .map_or(0, |backing| u64::from(tiles - backing.tiles) * TILE),
+        }
+    }
+
+    /// Ask for every mip from the next mapping on.
+    pub(super) fn need_whole(&self) {
+        if let Self::Reserved { whole, .. } = self {
+            whole.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether mapping from mip `first` would add memory.
+    fn can_grow(&self, first: u32) -> bool {
+        match self {
+            Self::Committed => false,
+            Self::Reserved { backing, whole, .. } => lock(backing).as_ref().is_none_or(|backing| {
+                backing.first != 0 && (first < backing.first || whole.load(Ordering::Relaxed))
+            }),
+        }
+    }
+
+    /// Whether a mapping could still give this image memory.
+    fn incomplete(&self) -> bool {
+        match self {
+            Self::Committed => false,
+            Self::Reserved { backing, .. } => lock(backing).as_ref().is_none_or(|backing| backing.first != 0),
+        }
+    }
+
+    /// Give a reserved image's mips from `first` onwards memory through
+    /// `queue`, in system memory if `room` has no space for them. Returns
+    /// whether it mapped anything.
     pub(super) fn map(
         &self,
         device: &ID3D12Device,
         queue: &ID3D12CommandQueue,
         native: &ID3D12Resource,
         flags: D3D12_RESOURCE_FLAGS,
+        first: u32,
         room: &mut budget::Room,
     ) -> Result<bool> {
-        let Self::Reserved { tiles, backing } = self else {
+        let Self::Reserved { tiles: total, backing, whole } = self else {
             return Ok(false);
         };
-        if backing.get().is_some() {
+        let first = if whole.load(Ordering::Relaxed) { 0 } else { first };
+        let mut backing = lock(backing);
+        let mapped = backing.as_ref().map(|backing| backing.first);
+        if mapped.is_some_and(|mapped| first >= mapped) {
             return Ok(false);
         }
-        let bytes = u64::from(*tiles) * TILE;
+        // A whole image takes one region, packed mips included.
+        let (list, first) = if first == 0 && mapped.is_none() {
+            (vec![Region { subresource: 0, tiles: *total, shape: None }], 0)
+        } else {
+            let (standard, tail) = tiling(device, native);
+            let first = first.min(standard.len() as u32);
+            (regions(&standard, tail, first, mapped), first)
+        };
+        let tiles: u32 = list.iter().map(|region| region.tiles).sum();
+        if tiles == 0 {
+            if let Some(backing) = backing.as_mut() {
+                backing.first = first;
+            }
+            return Ok(false);
+        }
+        let bytes = u64::from(tiles) * TILE;
         let mut system = room.spill(bytes, flags);
         let created = match system.then(|| heap(device, bytes, true)) {
             Some(Ok(created)) => created,
@@ -195,25 +316,49 @@ impl Residency {
                 heap(device, bytes, false)?
             }
         };
-        let start = D3D12_TILED_RESOURCE_COORDINATE::default();
-        let size = D3D12_TILE_REGION_SIZE { NumTiles: *tiles, UseBox: false.into(), ..Default::default() };
+        let starts: Vec<_> = list
+            .iter()
+            .map(|region| D3D12_TILED_RESOURCE_COORDINATE { Subresource: region.subresource, ..Default::default() })
+            .collect();
+        let sizes: Vec<_> = list
+            .iter()
+            .map(|region| {
+                let (width, height, depth) = region.shape.unwrap_or_default();
+                D3D12_TILE_REGION_SIZE {
+                    NumTiles: region.tiles,
+                    UseBox: region.shape.is_some().into(),
+                    Width: width,
+                    Height: height,
+                    Depth: depth,
+                }
+            })
+            .collect();
         let range = D3D12_TILE_RANGE_FLAG_NONE;
         let offset = 0u32;
-        // SAFETY: one region and one range, each of `tiles` tiles, covering the
-        // whole image (packed mips included) from heap offset zero.
+        // SAFETY: `regions` matching coordinates and sizes, and one range of
+        // all their tiles from heap offset zero.
         unsafe {
             queue.UpdateTileMappings(
-                native, 1, Some(&start), Some(&size), &created, 1,
-                Some(&range), Some(&offset), Some(tiles), D3D12_TILE_MAPPING_FLAG_NONE,
+                native, list.len() as u32, Some(starts.as_ptr()), Some(sizes.as_ptr()), &created, 1,
+                Some(&range), Some(&offset), Some(&tiles), D3D12_TILE_MAPPING_FLAG_NONE,
             );
         }
-        // Only the thread holding the transfer lock maps, so this cannot race.
-        let _ = backing.set(Backing { heap: created, system });
+        match backing.as_mut() {
+            Some(backing) => {
+                backing.heaps.push(created);
+                backing.first = first;
+                backing.tiles += tiles;
+                backing.system |= system;
+            }
+            None => {
+                *backing = Some(Backing { heaps: vec![created], first, tiles, system });
+                report("first use", BACKED.fetch_add(1, Ordering::Relaxed) + 1);
+            }
+        }
         if system {
             budget::spilled(bytes);
         }
         BACKED_BYTES.fetch_add(bytes, Ordering::Relaxed);
-        report("first use", BACKED.fetch_add(1, Ordering::Relaxed) + 1);
         Ok(true)
     }
 }
@@ -221,37 +366,56 @@ impl Residency {
 impl Texture {
     /// What queued work must keep until the GPU has finished with this image.
     pub(super) fn hold(&self) -> Held {
-        let heap = match &self.residency {
-            Residency::Committed => None,
-            Residency::Reserved { backing, .. } => backing.get().map(|backing| backing.heap.clone()),
+        let heaps = match &self.residency {
+            Residency::Committed => Vec::new(),
+            Residency::Reserved { backing, .. } => {
+                lock(backing).as_ref().map_or_else(Vec::new, |backing| backing.heaps.clone())
+            }
         };
-        Held { _image: self.native.clone(), _heap: heap }
-    }
-
-    fn unbacked(&self) -> bool {
-        matches!(self.residency.place(), Place::Unbacked(_))
+        Held { _image: self.native.clone(), _heaps: heaps }
     }
 }
 
 impl super::upload::Transfer {
     /// Back every reserved image in `textures` before work that uses them.
     /// Later uploads and the guest queue's wait for them are ordered after it.
-    pub(super) fn back(&mut self, device: &ID3D12Device, textures: &[std::sync::Arc<Texture>]) -> Result<()> {
+    pub(super) fn back(
+        &mut self,
+        device: &ID3D12Device,
+        images: &Images,
+        textures: &[std::sync::Arc<Texture>],
+    ) -> Result<()> {
         if let Some(error) = self.failed {
             return Err(error.into());
         }
+        let out_of_memory = |_| windows::core::Error::from(windows::Win32::Foundation::E_OUTOFMEMORY);
+        let mut wanted = Vec::new();
+        wanted.try_reserve(textures.len()).map_err(out_of_memory)?;
+        {
+            let images = lock(&images.0);
+            wanted.extend(
+                textures
+                    .iter()
+                    .filter(|texture| texture.residency.incomplete())
+                    .map(|texture| (texture, mips::first_needed(&images, texture))),
+            );
+        }
+        if wanted.is_empty() {
+            return Ok(());
+        }
         let mut mapped = Vec::new();
-        mapped.try_reserve(textures.len()).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
-        // The adapter is asked only when something needs memory.
-        let mut room = if textures.iter().any(|texture| texture.unbacked()) {
+        mapped.try_reserve(wanted.len()).map_err(out_of_memory)?;
+        // Images whose title still holds only their small mips ask every time,
+        // so the adapter is queried only when one of them can grow.
+        let mut room = if wanted.iter().any(|(texture, first)| texture.residency.can_grow(*first)) {
             self.meter.get_or_insert_with(|| budget::Meter::new(device)).room()
         } else {
-            budget::Room(None)
+            return Ok(());
         };
         // A failure still has to cover the mappings queued before it.
-        let result = textures.iter().try_for_each(|texture| {
+        let result = wanted.into_iter().try_for_each(|(texture, first)| {
             let flags = texture.desc.Flags;
-            if texture.residency.map(device, &self.queue, &texture.native, flags, &mut room)? {
+            if texture.residency.map(device, &self.queue, &texture.native, flags, first, &mut room)? {
                 mapped.push(texture);
             }
             Ok(())
