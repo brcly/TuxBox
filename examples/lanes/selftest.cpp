@@ -2684,6 +2684,39 @@ void ray_tracing_guest_memory(ID3D12Device* device) {
     if (copied != original) throw std::runtime_error("the structure in title memory was not copied" + sizes);
     // RADV reports a scene's current size above its prebuild maximum.
     if (!placed) throw std::runtime_error("the scene in title memory was not built" + sizes);
+
+    // A title can record work on a structure, then record a build over it
+    // before submitting that work. The earlier list still copies the structure
+    // it recorded, and its queue goes on.
+    auto second = gpu_buffer(bottom_size.ResultDataMaxSizeInBytes,
+                             D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+    auto later_reports = gpu_buffer(16, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    auto later_readback = buffer(device, D3D12_HEAP_TYPE_READBACK, 16, D3D12_RESOURCE_STATE_COPY_DEST);
+    Queue earlier(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+    Queue unsubmitted(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+    auto* first_list = earlier.list.Get();
+    builder.entry<Builder::CopyStructure>(5)(builder.object, first_list, second->GetGPUVirtualAddress(),
+                                             base + bottom_offset,
+                                             D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE_CLONE);
+    unordered_barrier(first_list);
+    current.DestBuffer = later_reports->GetGPUVirtualAddress();
+    const D3D12_GPU_VIRTUAL_ADDRESS cloned = second->GetGPUVirtualAddress();
+    method<EmitSizes>(first_list, slot_emit_sizes)(first_list, &current, 1, &cloned);
+    unordered_barrier(first_list);
+    compute_fixture::transition(first_list, later_reports.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                D3D12_RESOURCE_STATE_COPY_SOURCE);
+    first_list->CopyBufferRegion(later_readback.Get(), 0, later_reports.Get(), 0, 8);
+    // 256 bytes before the structure, so building it releases the structure.
+    build.DestAccelerationStructureData = base + bottom_offset - D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT;
+    builder.entry<Builder::Build>(3)(builder.object, unsubmitted.list.Get(), &build, 0, nullptr);
+    earlier.write64(label.address(), 23);
+    earlier.submit();
+    earlier.finish("a copy of a structure that was built over after it was recorded");
+    expect_value(label, 0, 23, "write after the copy of a replaced structure");
+    check(later_readback->Map(0, &range, reinterpret_cast<void**>(&mapped)), "map the later size report");
+    const UINT64 kept = mapped[0];
+    later_readback->Unmap(0, &empty);
+    if (kept != original) throw std::runtime_error("the replaced structure was not copied" + sizes);
 }
 
 // The console's quantized positions: a 32-byte header just before the first

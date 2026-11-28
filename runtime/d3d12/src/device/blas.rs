@@ -299,6 +299,20 @@ pub(crate) unsafe fn submitted_address(owner: &IUnknown, address: u64) -> u64 {
         .unwrap_or(address)
 }
 
+/// Whether the structure at `address` lies in a title's own memory, whose
+/// storage is published when a build is recorded rather than when it is
+/// submitted.
+///
+/// # Safety
+/// The owner must identify the controlling guest device.
+pub(crate) unsafe fn published_when_recorded(owner: &IUnknown, address: u64) -> bool {
+    unsafe { guest(owner) }
+        .state
+        .blas
+        .find(address, Kind::Structure)
+        .is_ok_and(|pool| pool.native.is_none())
+}
+
 pub(crate) struct MappingSubmission<'a> {
     mappings: &'a Mutex<Mappings>,
     _submission: MutexGuard<'a, ()>,

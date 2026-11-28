@@ -63,7 +63,9 @@ impl SceneCommand {
                     blas::set_inline_instances(owner, *guest, *native, records.clone());
                     blas::publish_destination(owner, *guest, *native, Some(*bytes));
                 }
-                Self::Source { guest, native } => validate_source(owner, *guest, *native)?,
+                Self::Source { guest, native } => {
+                    validate_source(owner, *guest, *native)?;
+                }
                 Self::Copy {
                     guest,
                     native,
@@ -71,8 +73,12 @@ impl SceneCommand {
                     source_native,
                     capacity,
                 } => {
-                    validate_source(owner, *source_guest, *source_native)?;
-                    let bytes = blas::submitted_size(owner, *source_guest, *source_native);
+                    // A replaced source's size belongs to its successor. The
+                    // destination was sized for the storage the list copies.
+                    let bytes = match validate_source(owner, *source_guest, *source_native)? {
+                        Source::Current => blas::submitted_size(owner, *source_guest, *source_native),
+                        Source::Replaced => *capacity,
+                    };
                     if let Some(capacity) = capacity
                         && bytes.is_none_or(|needed| needed > *capacity)
                     {
@@ -100,15 +106,61 @@ impl SceneCommand {
     }
 }
 
-fn validate_source(owner: &IUnknown, guest: u64, recorded: u64) -> Result<()> {
-    let submitted = unsafe { blas::submitted_address(owner, guest) };
-    if submitted != recorded {
-        crate::diagnostics::recording_error(format_args!(
-            "recorded AS source {guest:#x} used {recorded:#x}, now resolves to {submitted:#x}"
-        ));
-        return Err(E_INVALIDARG.into());
+/// What a list's recorded source address still names.
+#[derive(Debug, PartialEq)]
+enum Source {
+    Current,
+    /// A later recording gave the title's address new storage. The list keeps
+    /// the storage it recorded, which still holds the structure it meant.
+    Replaced,
+}
+
+/// Decide whether a list that recorded `recorded` for the structure at `guest`
+/// may run now that the address resolves to `submitted`.
+///
+/// Storage in a title's own memory is published when a build is recorded, so a
+/// later recording can replace it before an earlier list is submitted. Refusing
+/// that list would stop its queue for good, and every label the queue was to
+/// write. A raw guest address is refused: the host cannot read a structure there.
+fn source_state(
+    guest: u64,
+    recorded: u64,
+    submitted: u64,
+    published_when_recorded: impl FnOnce() -> bool,
+) -> Option<Source> {
+    if submitted == recorded {
+        Some(Source::Current)
+    } else if recorded != guest && published_when_recorded() {
+        Some(Source::Replaced)
+    } else {
+        None
     }
-    Ok(())
+}
+
+fn validate_source(owner: &IUnknown, guest: u64, recorded: u64) -> Result<Source> {
+    let submitted = unsafe { blas::submitted_address(owner, guest) };
+    let state = source_state(guest, recorded, submitted, || unsafe {
+        blas::published_when_recorded(owner, guest)
+    });
+    match state {
+        Some(Source::Replaced) => {
+            static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let count = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if count <= 8 || count.is_power_of_two() {
+                crate::diagnostics::log(&format!(
+                    "AS source {guest:#x} was given new storage after a list recorded it (#{count}): the list keeps {recorded:#x}, the address now resolves to {submitted:#x}"
+                ));
+            }
+        }
+        Some(Source::Current) => {}
+        None => {
+            crate::diagnostics::recording_error(format_args!(
+                "recorded AS source {guest:#x} used {recorded:#x}, now resolves to {submitted:#x}"
+            ));
+            return Err(E_INVALIDARG.into());
+        }
+    }
+    Ok(state.unwrap_or(Source::Current))
 }
 
 pub(super) fn retain(recording: &Recording, resources: &[&ID3D12Resource]) -> Result<()> {
@@ -339,3 +391,7 @@ pub(super) unsafe extern "system" fn postbuild(
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/commands/replaced_source.rs"]
+mod tests;
