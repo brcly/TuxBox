@@ -384,7 +384,12 @@ impl<'a> Emitter<'a> {
                     cur.clear();
                 }
                 // Evaluate the back-edge condition inside the guard (a skipped branch is not taken).
-                let cond = wave_cull::branch_condition(self, ins, Self::branch_cond(ins.op).unwrap_or("false"));
+                // Where the whole wave decides branches on EXEC and VCC, it decides this one
+                // too. A lane outside EXEC enters the loop with its wave: on its own bit it
+                // would stay until the iteration cap, and keep the wave there with it.
+                let cond = mask_ballots::branch(self, i, ins.op).unwrap_or_else(|| {
+                    wave_cull::branch_condition(self, ins, Self::branch_cond(ins.op).unwrap_or("false"))
+                });
                 self.line(&format!("tb_c{i} = ({cond});"));
                 if labels.contains(&i) {
                     // A `continue` jumped here: iterate again regardless of the condition.

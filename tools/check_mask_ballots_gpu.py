@@ -52,6 +52,15 @@ WAVE32 = {
     "others": ["v_cmp_lt_u32_e32 vcc_lo, 0x3e8, v0", "s_andn2_b32 s11, exec_lo, vcc_lo",
                "s_bcnt1_i32_b32 s20, s11", branch("s_cbranch_scc0", "end"), "v_mov_b32_e32 v10, s20",
                "v_mbcnt_lo_u32_b32 v11, s11, 0", "v_mov_b32_e32 v12, 1", label("end")],
+    # A loop that ends on VCC, entered by a wave that left lanes outside EXEC, then a loop
+    # every lane runs. A lane that stayed in the first loop has no iterations left for it.
+    "latch": ["v_cmp_lt_u32_e32 vcc_lo, 0x3e8, v0", "s_bcnt1_i32_b32 s20, vcc_lo",
+              "s_and_saveexec_b32 s10, vcc_lo", branch("s_cbranch_execz", "out"),
+              label("again"), "v_add_nc_u32_e32 v11, 1, v11", "v_cmp_lt_u32_e32 vcc_lo, 2, v11",
+              branch("s_cbranch_vccz", "again"),
+              label("out"), "s_mov_b32 exec_lo, s10", "s_mov_b32 s22, 0",
+              label("more"), "v_add_nc_u32_e32 v10, 1, v10", "s_add_u32 s22, s22, 1", "s_cmp_lt_u32 s22, 3",
+              branch("s_cbranch_scc1", "more"), "v_mov_b32_e32 v12, s20"],
 }
 WAVE64 = {
     "compare": ["v_cmp_lt_u32_e32 vcc, 0x3e8, v0", "s_bcnt1_i32_b64 s20, vcc", "v_mov_b32_e32 v10, s20",
@@ -72,6 +81,13 @@ WAVE64 = {
                "s_bcnt1_i32_b64 s20, s[14:15]", branch("s_cbranch_scc0", "end"), "v_mov_b32_e32 v10, s20",
                "v_mbcnt_lo_u32_b32 v11, s14, 0", "v_mbcnt_hi_u32_b32 v11, s15, v11", "v_mov_b32_e32 v12, 1",
                label("end")],
+    "latch": ["v_cmp_lt_u32_e32 vcc, 0x3e8, v0", "s_bcnt1_i32_b64 s20, vcc",
+              "s_and_saveexec_b64 s[10:11], vcc", branch("s_cbranch_execz", "out"),
+              label("again"), "v_add_nc_u32_e32 v11, 1, v11", "v_cmp_lt_u32_e32 vcc, 2, v11",
+              branch("s_cbranch_vccz", "again"),
+              label("out"), "s_mov_b64 exec, s[10:11]", "s_mov_b32 s22, 0",
+              label("more"), "v_add_nc_u32_e32 v10, 1, v10", "s_add_u32 s22, s22, 1", "s_cmp_lt_u32 s22, 3",
+              branch("s_cbranch_scc1", "more"), "v_mov_b32_e32 v12, s20"],
     # The exclusive prefix sum of the active lanes' values, taken twice in a loop. The lower
     # half's total goes round through lane 31.
     "scan": ["v_cmp_lt_u32_e32 vcc, 0x3e8, v0", "s_bcnt1_i32_b64 s20, vcc", "v_mov_b32_e32 v10, s20",
@@ -101,7 +117,7 @@ def model(name, active, values, host):
         value = values[start:start + host]
         over = [on[i] and value[i] > LIMIT for i in lanes]
         mask = {"compare": over, "elected": over, "gathered": [on[i] and value[i] & 3 < 3 for i in lanes],
-                "others": [on[i] and not over[i] for i in lanes], "scan": over}[name]
+                "others": [on[i] and not over[i] for i in lanes], "scan": over, "latch": over}[name]
         count, first = sum(mask), mask.index(True) if any(mask) else 0xffffffff
         for i in lanes:
             rank = sum(mask[:i])
@@ -109,6 +125,9 @@ def model(name, active, values, host):
                 rows.append((0, 0, 0))
             elif name == "compare":
                 rows.append((count, rank, first))
+            elif name == "latch":
+                # Three turns of the second loop for every lane; three of the first for its own.
+                rows.append((3, 3 if mask[i] else 0, count))
             elif name == "scan":
                 rows.append((count, 0, 2 * sum(value[j] for j in range(i) if on[j]) & 0xffffffff))
             elif name == "elected":

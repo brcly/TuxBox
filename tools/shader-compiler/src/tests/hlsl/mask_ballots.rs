@@ -256,3 +256,28 @@ fn branches_on_exec_and_vcc_are_decided_by_the_whole_wave() {
         }
     }
 }
+
+#[test]
+fn a_loop_ends_when_the_whole_wave_says_so() {
+    // s_mov_b32 s12, exec_lo; v_cmp_lt_u32 vcc, 1000, v0; s_and_saveexec_b32 s20, vcc_lo;
+    // s_cbranch_execz over the loop; loop: v_cmp_lt_u32 vcc, 1000, v0; s_cbranch_vccz loop;
+    // s_mov_b32 exec_lo, s20; v_mov_b32 v10, s22
+    let words = [
+        0xbe8c_037e, 0x7d82_00ff, 1000, 0xbe94_3c6a, 0xbf88_0003, 0x7d82_00ff, 1000, 0xbf86_fffd, 0xbefe_0314,
+        0x7e14_0216, 0xbf81_0000u32,
+    ];
+    // A lane the compare left out of EXEC enters the loop with its wave, where
+    // the branch before it is the wave's. Its own VCC bit never sets: the loop
+    // must end on the wave's, or that lane keeps the wave in it.
+    for (threads, wave) in [([64, 1, 1], true), ([16, 1, 1], false)] {
+        let (mut ex, _, _): (ShaderExtract, _, _) = fixture::shader(32);
+        ex.isa = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        ex.isa_data = ex.isa.clone();
+        ex.psv_threads = Some(threads);
+        let shader = translate(&ex).unwrap();
+        let entered = if wave { "!WaveActiveAnyTrue((exec_lo & 1u) != 0u)" } else { "(exec_lo & 1u) == 0u" };
+        assert!(shader.hlsl.contains(entered), "{}", shader.hlsl);
+        let latch = if wave { "tb_c5 = (!WaveActiveAnyTrue((vcc_lo & 1u) != 0u));" } else { "tb_c5 = ((vcc_lo & 1u) == 0u);" };
+        assert!(shader.hlsl.contains(latch), "{}", shader.hlsl);
+    }
+}
