@@ -299,17 +299,15 @@ fn aliases_import_their_private_backing() {
     unsafe { core::ptr::copy_nonoverlapping(gpu_words.as_ptr(), mapped.cast::<u32>().add(8), 4) };
 
     // The GPU reads the CPU's bytes through the first alias, writes through
-    // it, and reads that write back through the second alias.
-    submit(&device, |list| unsafe {
-        list.CopyBufferRegion(&readback, 0, &via_first, 0, 32);
-        list.CopyBufferRegion(&via_first, 32, &upload, 32, 16);
-        let barrier = D3D12_RESOURCE_BARRIER {
-            Type: D3D12_RESOURCE_BARRIER_TYPE_UAV,
-            ..Default::default()
-        };
-        list.ResourceBarrier(&[barrier]);
-        list.CopyBufferRegion(&readback, 32, &via_second, 32, 16);
-    });
+    // it, and reads that write back through the second alias. A UAV barrier
+    // orders unordered-access work, not copies, and the two aliases are
+    // separate resources on one memory, so no barrier in one list orders the
+    // copy through the second after the write through the first. Each step is
+    // its own submission instead. One list with a UAV barrier passes under
+    // vkd3d-proton but reads the old bytes on Windows' own runtime.
+    submit(&device, |list| unsafe { list.CopyBufferRegion(&readback, 0, &via_first, 0, 32) });
+    submit(&device, |list| unsafe { list.CopyBufferRegion(&via_first, 32, &upload, 32, 16) });
+    submit(&device, |list| unsafe { list.CopyBufferRegion(&readback, 32, &via_second, 32, 16) });
     let mut out = core::ptr::null_mut();
     unsafe { readback.Map(0, None, Some(&mut out)) }.unwrap();
     let seen = unsafe { core::slice::from_raw_parts(out.cast::<u32>(), 12) };
@@ -504,20 +502,20 @@ fn scattered_alias_imports_through_reserved_buffer_and_aliases_cpu_and_gpu() {
         core::ptr::copy_nonoverlapping(write_b.as_ptr(), mapped.cast::<u32>().add(8), 4);
     }
 
+    // Each step is its own submission: see `aliases_import_their_private_backing`.
     submit(&device, |list| unsafe {
         // Read initial CPU markers across all 3 tiles: tile 0=c, tile 1=a, tile 2=b.
         list.CopyBufferRegion(&readback, 0, &res_abc, 0, 16);
         list.CopyBufferRegion(&readback, 16, &res_abc, PAGE, 16);
         list.CopyBufferRegion(&readback, 32, &res_abc, 2 * PAGE, 16);
+    });
+    submit(&device, |list| unsafe {
         // Write into all 3 tiles (including tail tile 2 < width=2*PAGE+1024) via res_abc.
         list.CopyBufferRegion(&res_abc, 64, &upload, 0, 16);
         list.CopyBufferRegion(&res_abc, PAGE + 64, &upload, 16, 16);
         list.CopyBufferRegion(&res_abc, 2 * PAGE + 64, &upload, 32, 16);
-        let barrier = D3D12_RESOURCE_BARRIER {
-            Type: D3D12_RESOURCE_BARRIER_TYPE_UAV,
-            ..Default::default()
-        };
-        list.ResourceBarrier(&[barrier]);
+    });
+    submit(&device, |list| unsafe {
         // Read GPU writes back via the second alias `[b, c]`.
         list.CopyBufferRegion(&readback, 64, &res_bc, 64, 16);
         list.CopyBufferRegion(&readback, 80, &res_bc, PAGE + 64, 16);
