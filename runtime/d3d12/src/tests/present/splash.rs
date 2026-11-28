@@ -29,20 +29,30 @@ fn edges(at: RECT) -> (i32, i32, i32, i32) {
 }
 
 #[test]
-fn the_image_keeps_its_own_size_when_it_fits() {
-    // The 2560x1440 monitor's work area below GNOME's top bar.
-    assert_eq!(edges(placement((2560, 1404), (1920, 1080))), (320, 162, 2240, 1242));
+fn the_image_fills_a_window_of_its_proportions() {
+    // A 2560x1440 window showing 1920x1080 art, as reported with black borders.
+    assert_eq!(edges(placement((2560, 1440), (1920, 1080))), (0, 0, 2560, 1440));
+    assert_eq!(edges(placement((3840, 2160), (1920, 1080))), (0, 0, 3840, 2160));
     assert_eq!(edges(placement((1920, 1080), (1920, 1080))), (0, 0, 1920, 1080));
 }
 
 #[test]
-fn a_larger_image_is_scaled_down_in_proportion() {
-    // A 1920x1080 monitor's work area below the same top bar.
+fn other_proportions_keep_the_image_s_own_between_bars() {
+    // A work area below a 36 pixel top bar.
+    assert_eq!(edges(placement((2560, 1404), (1920, 1080))), (32, 0, 2528, 1404));
     assert_eq!(edges(placement((1920, 1044), (1920, 1080))), (32, 0, 1888, 1044));
     assert_eq!(edges(placement((1000, 1000), (1920, 1080))), (0, 219, 1000, 781));
     assert_eq!(edges(placement((1000, 400), (1920, 1080))), (144, 0, 855, 400));
     let empty = placement((0, 0), (1920, 1080));
     assert_eq!((empty.right - empty.left, empty.bottom - empty.top), (0, 0));
+}
+
+#[test]
+fn enlarging_interpolates_between_samples_and_keeps_the_ends() {
+    let row = [0, 0, 0, 0, 200, 200, 200, 200];
+    let wide = resize(&row, (2, 1), (4, 1)).unwrap();
+    assert_eq!(wide.chunks_exact(4).map(|pixel| pixel[0]).collect::<Vec<_>>(), [0, 50, 150, 200]);
+    assert_eq!(resize(&[7, 8, 9, 255], (1, 1), (3, 2)).unwrap(), [7, 8, 9, 255].repeat(6));
 }
 
 #[test]
@@ -52,17 +62,17 @@ fn shrinking_averages_the_area_each_pixel_covers() {
         10, 20, 30, 255, 30, 40, 50, 255, /**/ 0, 0, 0, 0, 0, 0, 0, 0, //
         50, 60, 70, 255, 70, 80, 90, 255, /**/ 100, 100, 100, 128, 0, 0, 0, 0,
     ];
-    assert_eq!(shrink(&pixels, (4, 2), (2, 1)).unwrap(), [40, 50, 60, 255, 25, 25, 25, 32]);
+    assert_eq!(resize(&pixels, (4, 2), (2, 1)).unwrap(), [40, 50, 60, 255, 25, 25, 25, 32]);
     // Three samples to two: each output covers one and a half inputs.
     let row = [0, 0, 0, 0, 90, 90, 90, 90, 180, 180, 180, 180];
-    assert_eq!(shrink(&row, (3, 1), (2, 1)).unwrap(), [30, 30, 30, 30, 150, 150, 150, 150]);
+    assert_eq!(resize(&row, (3, 1), (2, 1)).unwrap(), [30, 30, 30, 30, 150, 150, 150, 150]);
 }
 
 #[test]
 fn shrinking_keeps_a_flat_image_flat() {
     // The 1920x1080 art on a 1920x1080 monitor's work area.
     let pixels: Vec<u8> = [48, 192, 144, 255].repeat(1920 * 1080);
-    let shrunk = shrink(&pixels, (1920, 1080), (1856, 1044)).unwrap();
+    let shrunk = resize(&pixels, (1920, 1080), (1856, 1044)).unwrap();
     assert_eq!(shrunk.len(), 1856 * 1044 * 4);
     assert!(shrunk.chunks_exact(4).all(|pixel| pixel == [48, 192, 144, 255]));
 }

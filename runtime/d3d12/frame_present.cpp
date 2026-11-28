@@ -146,16 +146,19 @@ bool DisplayCheck::splash_shows(ULONGLONG milliseconds) const {
         if (!GetClientRect(window_, &client) || !ClientToScreen(window_, &origin)) return false;
         HDC screen = GetDC(nullptr);
         if (!screen) throw std::runtime_error("could not acquire screen DC");
-        const POINT middle{origin.x + client.right / 2, origin.y + client.bottom / 2};
+        // The image fills the client area in its own proportions, centred.
+        const bool tall = splash_width * client.bottom > splash_height * client.right;
+        const LONG w = tall ? client.right : client.bottom * splash_width / splash_height;
+        const LONG h = tall ? client.right * splash_height / splash_width : client.bottom;
+        const POINT corner{origin.x + (client.right - w) / 2, origin.y + (client.bottom - h) / 2};
         bool matched = true;
         for (const auto& at : samples) {
-            // The sample points, moved inside the centred image.
-            const LONG x = middle.x + splash_width * (at.x - 50) / 200;
-            const LONG y = middle.y + splash_height * (at.y - 50) / 200;
-            matched &= screen_pixel(screen, window_, {x, y}) == splash_image;
+            const POINT inside{corner.x + w * at.x / 100, corner.y + h * at.y / 100};
+            matched &= screen_pixel(screen, window_, inside) == splash_image;
         }
-        // Outside it the window is black.
-        matched &= screen_pixel(screen, window_, {middle.x - splash_width, middle.y}) == RGB(0, 0, 0);
+        // Where the proportions differ, the bars beside or above it are black.
+        if (client.right - w > 4 || client.bottom - h > 4)
+            matched &= screen_pixel(screen, window_, {origin.x + 1, origin.y + 1}) == RGB(0, 0, 0);
         ReleaseDC(nullptr, screen);
         if (matched) return true;
         Sleep(16);

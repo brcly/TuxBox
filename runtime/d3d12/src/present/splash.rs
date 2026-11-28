@@ -9,7 +9,7 @@
 //! An in-context WinEvent hook runs on the thread that creates the title's
 //! window, before the title shows it, and fits the window as the first present
 //! would. A thread of TuxBox's own then paints the image into that window,
-//! centred on black, until the title presents steadily. Until then its frames
+//! scaled to fill it in proportion, until the title presents steadily. Until then its frames
 //! complete without reaching the screen, so no swap chain exists yet. A second
 //! window would need the title's to be transparent behind it, which not every
 //! desktop honours, and a tiling compositor places the two apart.
@@ -114,14 +114,12 @@ fn attributes(mut rest: &str) -> impl Iterator<Item = (&str, &str)> {
     })
 }
 
-/// Where the image goes in an area: centred at its own size, or scaled down
-/// in proportion when the area is smaller.
+/// Where the image goes in an area: as large as fits in proportion, centred.
+/// A window of the image's proportions shows no border, whatever its size.
 pub(super) fn placement(area: (i32, i32), image: (u32, u32)) -> RECT {
     let (aw, ah) = (i64::from(area.0.max(0)), i64::from(area.1.max(0)));
     let (iw, ih) = (i64::from(image.0.max(1)), i64::from(image.1.max(1)));
-    let (w, h) = if iw <= aw && ih <= ah {
-        (iw, ih)
-    } else if iw * ah > ih * aw {
+    let (w, h) = if iw * ah > ih * aw {
         (aw, ih * aw / iw)
     } else {
         (iw * ah / ih, ah)
@@ -135,12 +133,24 @@ pub(super) fn placement(area: (i32, i32), image: (u32, u32)) -> RECT {
     }
 }
 
-/// Each output index's source indices and weights for an area-weighted
-/// reduction from `from` to `to` samples. The weights of one output sum to 1.
+/// Each output index's source indices and weights, from `from` to `to`
+/// samples: the area it covers when reducing, the two nearest samples when
+/// enlarging. The weights of one output sum to 1.
 fn taps(from: u32, to: u32) -> Vec<Vec<(usize, f32)>> {
     let scale = f64::from(from) / f64::from(to);
     (0..to)
         .map(|i| {
+            if to > from {
+                // The output sample's centre, in source sample centres.
+                let at = ((f64::from(i) + 0.5) * scale - 0.5).clamp(0.0, f64::from(from - 1));
+                let low = at.floor() as usize;
+                let part = (at - low as f64) as f32;
+                return if part > 0.0 {
+                    vec![(low, 1.0 - part), (low + 1, part)]
+                } else {
+                    vec![(low, 1.0)]
+                };
+            }
             let (start, end) = (f64::from(i) * scale, f64::from(i + 1) * scale);
             (start.floor() as usize..(end.ceil() as usize).min(from as usize))
                 .filter_map(|s| {
@@ -152,9 +162,10 @@ fn taps(from: u32, to: u32) -> Vec<Vec<(usize, f32)>> {
         .collect()
 }
 
-/// Scale premultiplied BGRA pixels down, averaging the area each output
-/// pixel covers. Premultiplied channels average correctly with their alpha.
-pub(super) fn shrink(pixels: &[u8], from: (u32, u32), to: (u32, u32)) -> Option<Vec<u8>> {
+/// Scale premultiplied BGRA pixels, averaging the area each output pixel
+/// covers when reducing and interpolating when enlarging. Premultiplied
+/// channels average correctly with their alpha.
+pub(super) fn resize(pixels: &[u8], from: (u32, u32), to: (u32, u32)) -> Option<Vec<u8>> {
     let (fw, fh, tw, th) = (from.0 as usize, from.1 as usize, to.0 as usize, to.1 as usize);
     let average = |sources: &mut dyn Iterator<Item = ([u8; 4], f32)>| {
         let mut sum = [0f32; 4];
@@ -346,7 +357,7 @@ fn run(splash: &Splash, image: &Path) {
             return;
         }
     };
-    // The image at the size last painted, if it had to be scaled down.
+    // The image at the size last painted, if it had to be scaled.
     let mut scaled: Option<((u32, u32), Vec<u8>)> = None;
     loop {
         {
@@ -390,7 +401,8 @@ fn run(splash: &Splash, image: &Path) {
     }
 }
 
-/// Paint the image into the window's client area, centred on black. Returns the
+/// Paint the image into the window's client area, over black bars where the
+/// proportions differ. Returns the
 /// size painted, or `None` while the window has no visible area.
 unsafe fn paint(
     window: HWND,
@@ -411,7 +423,7 @@ unsafe fn paint(
             &art.pixels
         } else {
             if scaled.as_ref().is_none_or(|(made, _)| *made != size) {
-                *scaled = Some((size, shrink(&art.pixels, (art.width, art.height), size)?));
+                *scaled = Some((size, resize(&art.pixels, (art.width, art.height), size)?));
             }
             &scaled.as_ref()?.1
         };
