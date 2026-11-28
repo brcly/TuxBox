@@ -40,6 +40,8 @@ pub(crate) struct PipelineData {
     pub(crate) group_base: Option<std::sync::Arc<super::compute_split::GroupBase>>,
     /// Set on a stand-in whose real compile is still running (see `late_pipeline`).
     pub(crate) late: Option<Box<super::late_pipeline::Late>>,
+    /// Set on a released pipeline, rebuilt at its first bind (see `deferred`).
+    pub(crate) lazy: Option<Box<super::deferred::Lazy>>,
 }
 
 const _: () = assert!(

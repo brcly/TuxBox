@@ -21,7 +21,14 @@ fn subobject<T>() -> (usize, usize) {
     )
 }
 
-fn layout(tag: i32) -> Option<(usize, usize)> {
+/// Whether a subobject holds shader bytecode.
+pub(super) fn is_shader(tag: i32) -> bool {
+    matches!(tag, 1..=6 | AMPLIFICATION_X | MESH_X)
+        || tag == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS.0
+        || tag == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS.0
+}
+
+pub(super) fn layout(tag: i32) -> Option<(usize, usize)> {
     Some(match tag {
         0 => subobject::<*mut c_void>(), // root signature
         1..=6 | AMPLIFICATION_X | MESH_X => subobject::<D3D12_SHADER_BYTECODE>(),
@@ -74,7 +81,7 @@ fn stream_label(original: &[Option<(&[u8], Option<usize>)>; 8]) -> String {
     if label.is_empty() { "stream".to_string() } else { label }
 }
 
-unsafe fn create(
+pub(super) unsafe fn create(
     device: &Device,
     desc: &D3D12_PIPELINE_STATE_STREAM_DESC,
     pipeline: &mut compute::PipelineData,
@@ -837,6 +844,14 @@ unsafe fn create_pipeline_inner(
         desc.SizeInBytes,
         native.as_ref().err().map(|e| e.code().0),
     );
+    // SAFETY: the guest keeps the stream and its inputs until this call returns.
+    let (native, state) = match native {
+        Ok(native) => {
+            let (native, state) = unsafe { super::deferred::release(device, desc, native, state) };
+            (Ok(native), state)
+        }
+        Err(error) => (Err(error), state),
+    };
     unsafe { wrap_pageable(native, &compute::PIPELINE, device, state, out) }
 }
 

@@ -54,6 +54,7 @@ The launcher sets these for a Proton or Wine launch. A value you set yourself is
 | `TUXBOX_LARGE_COMPILES` | `4` | Large compute pipelines compiling at once; `0` removes the limit |
 | `TUXBOX_TRACE_PIPELINE_REQUESTS` | `0` | With diagnostic logging enabled, also log start and completion of short slot-62 compute pipeline attempts, including the selected shader cache request key and byte size |
 | `TUXBOX_PIPELINE_DEADLINE` | `20` | Seconds, whole or fractional, before a large compile gets an empty stand-in, which the finished compile later replaces; `0` waits |
+| `TUXBOX_RESIDENT_PIPELINES` | `4096` | Graphics pipeline streams kept resident. Later ones are compiled, so the driver caches them, then released and rebuilt at their first bind, which saves host memory. `all` keeps every one |
 | `TUXBOX_LAZY_TEXTURES` | on | Placed textures get graphics memory when GPU work first uses them; `0` gives each its memory when it is created |
 | `TUXBOX_NULL_PIPELINES` | on | `0` fails unsupported pipelines instead of giving empty stand-ins |
 | `TUXBOX_PROGRESS_OVERLAY` | `auto` | `always` or `0` for the progress panel |

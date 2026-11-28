@@ -56,6 +56,9 @@ pub(crate) type Resolved<'a> = (&'a ID3D12PipelineState, &'a PipelineData);
 
 /// The pipeline to bind for `pipeline` now, with the bindings that go with it.
 pub(crate) fn current(pipeline: &Pipeline) -> Resolved<'_> {
+    if let Some(lazy) = &pipeline.state.lazy {
+        return lazy.resolve((&pipeline.native, &pipeline.state));
+    }
     let Some(late) = &pipeline.state.late else { return (&pipeline.native, &pipeline.state) };
     let (native, data, first) = late.slot.pick((&pipeline.native, &pipeline.state), &late.data);
     if first {
