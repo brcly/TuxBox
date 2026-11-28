@@ -33,6 +33,32 @@ COLORREF screen_pixel(HDC screen, HWND window, POINT at) {
     return GetPixel(screen, at.x, at.y);
 }
 
+// Name what the screen shows at the sample points when they miss: another
+// window above the check's window explains colours its frame never had.
+std::string coverage(HWND window) {
+    RECT client{};
+    POINT origin{};
+    if (!window || !GetClientRect(window, &client) || !ClientToScreen(window, &origin)) return {};
+    int covered = 0;
+    for (const auto& at : samples) {
+        const POINT point{origin.x + client.right * at.x / 100, origin.y + client.bottom * at.y / 100};
+        covered += GetAncestor(WindowFromPoint(point), GA_ROOT) != window;
+    }
+    const bool topmost = GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST;
+    return " covered=" + std::to_string(covered) + "/" + std::to_string(samples.size())
+        + (GetForegroundWindow() == window ? " foreground=1" : " foreground=0") + (topmost ? " topmost=1" : " topmost=0");
+}
+
+// A window this process shows while another process has the foreground
+// cannot take it, and Windows leaves it below the foreground window. The
+// popups the other modes sample are topmost; the title-style windows of the
+// owned and splash modes are not, so raise them the same way, without
+// taking the foreground from the user. Raise a window once it is shown:
+// showing it from the background left it below again.
+void keep_above(HWND window) {
+    SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
 std::string describe(const std::array<COLORREF, samples.size()>& pixels) {
     char text[80];
     std::snprintf(text, sizeof(text), " screen=%#lx/%#lx/%#lx/%#lx/%#lx", pixels[0], pixels[1], pixels[2],
@@ -65,8 +91,9 @@ DisplayCheck::DisplayCheck(UINT width, UINT height, const wchar_t* window_mode)
         POINT origin{};
         measure(client, origin);
         ShowWindow(window_, SW_SHOW);
+        keep_above(window_);
         UpdateWindow(window_);
-        if (!splash_shows(4000)) throw std::runtime_error("the package splash did not appear" + describe(sample()) + sizing_);
+        if (!splash_shows(4000)) throw std::runtime_error("the package splash did not appear" + describe(sample()) + sizing_ + coverage(window_));
         if (FindWindowW(L"TuxBox.Splash", nullptr)) throw std::runtime_error("the package splash opened a window of its own");
         return;
     }
@@ -231,6 +258,8 @@ void DisplayCheck::verify(ID3D12CommandQueue* queue, ID3D12Resource* source, UIN
             *reinterpret_cast<HWND*>(data) = w;
             return FALSE;
         }, reinterpret_cast<LPARAM>(&window_));
+        // The provider's own window, like a title's, is not topmost.
+        if (window_) keep_above(window_);
     }
     RECT client{};
     POINT origin{};
@@ -269,6 +298,6 @@ void DisplayCheck::verify(ID3D12CommandQueue* queue, ID3D12Resource* source, UIN
     char message[180];
     std::snprintf(message, sizeof(message), "screen colors on frame %llu: %#lx/%#lx/%#lx/%#lx/%#lx, expected %#lx border and %#lx center",
                   token, pixels[0], pixels[1], pixels[2], pixels[3], pixels[4], corner, center);
-    throw std::runtime_error(message + sizing_);
+    throw std::runtime_error(message + sizing_ + coverage(window_));
 }
 }
