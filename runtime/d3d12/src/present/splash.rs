@@ -268,6 +268,17 @@ pub(crate) fn install() {
         })
         .unwrap_or_default()
     };
+    if hook.is_invalid() {
+        // Windows can refuse an in-context hook for a library it cannot
+        // register, with ERROR_MOD_NOT_FOUND. The title's window then keeps
+        // the size it asked for.
+        let error = windows::core::Error::from_win32();
+        crate::diagnostics::log(&format!(
+            "package splash {} not shown: no window hook ({:#010x})",
+            image.display(),
+            error.code().0
+        ));
+    }
     // The thread starts once the loader lock is free, before the title runs.
     let started = !hook.is_invalid()
         && std::thread::Builder::new()
