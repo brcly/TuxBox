@@ -12,6 +12,8 @@ fn test_arena(count: u32, limit: u32) -> Arc<Arena> {
         authored: Mutex::default(),
         tables: Mutex::new(Tables::default()),
         strides: Mutex::default(),
+        in_flight: Mutex::default(),
+        pins: Mutex::default(),
     })
 }
 
@@ -139,12 +141,12 @@ fn execute_rollback_and_clear_state_pin_retention() {
         let mut pending = PendingSubmissions::new();
         pending.pin_from(&leases).unwrap();
         let tables = arena.tables.lock().unwrap();
-        assert_eq!(tables.ranges.get(&(0, 4)).unwrap().pins, 2);
+        assert_eq!(tables.ranges.get(&(0, 4)).unwrap().pins.load(Ordering::Acquire), 2);
         // drop(pending) simulates Err unwind before commit!
     }
     {
         let tables = arena.tables.lock().unwrap();
-        assert_eq!(tables.ranges.get(&(0, 4)).unwrap().pins, 1);
+        assert_eq!(tables.ranges.get(&(0, 4)).unwrap().pins.load(Ordering::Acquire), 1);
     }
 
     // Simulate ClearState NOT clearing leases: table 0 stays pinned even after
@@ -233,7 +235,7 @@ fn sustained_turnover_exceeding_limit_and_pinned_oom() {
         E_OUTOFMEMORY
     );
     // in_flight should never leak across steady-state turnover.
-    assert!(arena.tables.lock().unwrap().in_flight.is_empty());
+    assert!(arena.in_flight.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -243,21 +245,21 @@ fn leases_deduplicate_within_list_and_across_bundle_adoption() {
     let h1 = arena.gpu_table(addr_of(&arena, 0), 4, &[], &mut list_leases).unwrap();
     let h2 = arena.gpu_table(addr_of(&arena, 0), 4, &[], &mut list_leases).unwrap();
     assert_eq!(h1.ptr, h2.ptr);
-    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(0, 4)).unwrap().pins, 1);
+    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(0, 4)).unwrap().pins.load(Ordering::Acquire), 1);
 
     let mut bundle_leases = DescriptorLeases::default();
     arena.gpu_table(addr_of(&arena, 0), 4, &[], &mut bundle_leases).unwrap();
     arena.gpu_table(addr_of(&arena, 8), 4, &[], &mut bundle_leases).unwrap();
-    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(0, 4)).unwrap().pins, 2);
+    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(0, 4)).unwrap().pins.load(Ordering::Acquire), 2);
 
     list_leases.extend_from(&bundle_leases).unwrap();
     // (0, 4) already leased by list_leases -> still 2; (8, 4) newly adopted -> 2.
-    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(0, 4)).unwrap().pins, 2);
-    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(8, 4)).unwrap().pins, 2);
+    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(0, 4)).unwrap().pins.load(Ordering::Acquire), 2);
+    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(8, 4)).unwrap().pins.load(Ordering::Acquire), 2);
 
     bundle_leases.clear();
-    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(0, 4)).unwrap().pins, 1);
-    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(8, 4)).unwrap().pins, 1);
+    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(0, 4)).unwrap().pins.load(Ordering::Acquire), 1);
+    assert_eq!(arena.tables.lock().unwrap().ranges.get(&(8, 4)).unwrap().pins.load(Ordering::Acquire), 1);
 }
 
 #[test]
@@ -273,6 +275,8 @@ fn inline_stride_mismatch_eviction_cleans_only_evicted_resident_records() {
         authored: Mutex::default(),
         tables: Mutex::new(Tables::default()),
         strides: Mutex::default(),
+        in_flight: Mutex::default(),
+        pins: Mutex::default(),
     });
     let mut leases = DescriptorLeases::default();
     arena.gpu_table(addr_of(&arena, 0), 3, &[], &mut leases).unwrap();
@@ -363,6 +367,8 @@ fn inline_arena_uses_32_byte_guest_stride_on_64_byte_native_heap() {
             authored: Mutex::default(),
             tables: Mutex::new(Tables::default()),
             strides: Mutex::default(),
+            in_flight: Mutex::default(),
+            pins: Mutex::default(),
         });
         {
             let mut entries = registry.arenas.lock().unwrap();
@@ -397,6 +403,78 @@ fn inline_arena_uses_32_byte_guest_stride_on_64_byte_native_heap() {
         assert!(tables.resident_records.contains_key(&2));
     }
     drop(backing);
+}
+
+#[test]
+fn a_large_table_evicts_in_one_pass_over_the_use_order() {
+    // Fill the visible heap with single-slot tables, oldest first, then ask
+    // for a table half its size. Choosing each victim by scanning every
+    // resident table would cost about n * n / 2 visits; one pass visits each
+    // evicted table once.
+    const N: u32 = 20_000;
+    let arena = test_arena(2 * N, N);
+    for logical in 0..N {
+        let mut leases = DescriptorLeases::default();
+        arena.gpu_table(addr_of(&arena, logical), 1, &[], &mut leases).unwrap();
+    }
+    let started = Instant::now();
+    let mut leases = DescriptorLeases::default();
+    let handle = arena.gpu_table(addr_of(&arena, N), N / 2, &[], &mut leases).unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(slot_of(&arena, handle), 0);
+    let tables = arena.tables.lock().unwrap();
+    assert_eq!(tables.ranges.len(), (N / 2 + 1) as usize);
+    assert_eq!(tables.lru.len(), tables.ranges.len());
+    assert!(elapsed < Duration::from_secs(1), "eviction of {} tables took {elapsed:?}", N / 2);
+}
+
+#[test]
+fn eviction_skips_pinned_tables_and_keeps_the_use_order_in_step() {
+    let arena = test_arena(64, 8);
+    let mut held = DescriptorLeases::default();
+    arena.gpu_table(addr_of(&arena, 0), 2, &[], &mut held).unwrap();
+    for logical in [10, 20, 30] {
+        let mut leases = DescriptorLeases::default();
+        arena.gpu_table(addr_of(&arena, logical), 2, &[], &mut leases).unwrap();
+    }
+    // Reuse (20, 2) so (10, 2) becomes the oldest unpinned table.
+    arena.gpu_table(addr_of(&arena, 20), 2, &[], &mut DescriptorLeases::default()).unwrap();
+    let mut leases = DescriptorLeases::default();
+    arena.gpu_table(addr_of(&arena, 40), 2, &[], &mut leases).unwrap();
+    let tables = arena.tables.lock().unwrap();
+    assert!(tables.ranges.contains_key(&(0, 2)), "a pinned table was evicted");
+    assert!(!tables.ranges.contains_key(&(10, 2)), "the oldest unpinned table stayed");
+    assert!(tables.ranges.contains_key(&(20, 2)));
+    let order: Vec<_> = tables.lru.iter().map(|&(_, key)| key).collect();
+    assert_eq!(order, [(0, 2), (30, 2), (20, 2), (40, 2)]);
+}
+
+#[test]
+fn submission_does_not_wait_for_the_table_lock() {
+    // An allocation that evicts holds `tables`. Committing a batch, and
+    // pinning or unpinning its tables, must not wait for it.
+    let arena = test_arena(64, 8);
+    let mut leases = DescriptorLeases::default();
+    arena.gpu_table(addr_of(&arena, 0), 4, &[], &mut leases).unwrap();
+    let fence = Arc::new(AtomicU64::new(0));
+    let held = arena.tables.lock().unwrap();
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut pending = PendingSubmissions::new();
+            pending.pin_from(&leases).unwrap();
+            pending.commit(RetireFence::Mock(fence.clone()), 1);
+            done.send(()).unwrap();
+        });
+        let result = finished.recv_timeout(Duration::from_secs(5));
+        drop(held);
+        assert!(result.is_ok(), "submission waited for the table lock");
+    });
+    let entry_pins = arena.tables.lock().unwrap().ranges[&(0, 4)].pins.load(Ordering::Acquire);
+    assert_eq!(entry_pins, 2);
+    fence.store(1, Ordering::Release);
+    arena.retire_completed();
+    assert_eq!(arena.tables.lock().unwrap().ranges[&(0, 4)].pins.load(Ordering::Acquire), 1);
 }
 
 /// Heaps from a host that refuses CPU view heaps above `most` for memory,

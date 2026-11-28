@@ -13,8 +13,9 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     sync::{
         Arc, Mutex, Weak,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU32, AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 use windows::Win32::Foundation::{E_INVALIDARG, E_OUTOFMEMORY};
 use windows::Win32::Graphics::Direct3D12::*;
@@ -89,15 +90,28 @@ impl RetireFence {
 struct TableEntry {
     id: u64,
     slot: u32,
-    pins: u32,
+    // Shared with `Arena::pins`, so submission can pin and unpin a table
+    // without taking the `tables` lock that eviction holds.
+    pins: Arc<AtomicU32>,
     direct_pinned: bool,
     last_used: u64,
+}
+
+impl TableEntry {
+    fn pinned(&self) -> bool {
+        self.pins.load(Ordering::Acquire) != 0
+    }
+}
+
+fn unpin(pins: &AtomicU32) {
+    let previous = pins.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| Some(n.saturating_sub(1)));
+    debug_assert!(previous.is_ok_and(|n| n > 0));
 }
 
 struct InFlightBatch {
     fence: RetireFence,
     value: u64,
-    ids: Vec<u64>,
+    pins: Vec<Arc<AtomicU32>>,
 }
 
 /// Displaced host view metadata collected under `tables` and dropped after releasing the lock.
@@ -116,12 +130,21 @@ struct Tables {
     // No range in `ranges` is longer than this, so one that overlaps a slot
     // starts at most this far before it.
     longest: u32,
+    // Every resident table by (last use, key): eviction takes the oldest
+    // unpinned one without scanning all of them.
+    lru: BTreeSet<(u64, (u32, u32))>,
     by_id: HashMap<u64, (u32, u32)>,
     next_id: u64,
     tick: u64,
-    in_flight: VecDeque<InFlightBatch>,
     direct: index_map::Direct,
     resident_records: BTreeMap<usize, InlineDescriptor>,
+}
+
+/// Tables evicted and entries visited by one allocation, for the slow-path log.
+#[derive(Default)]
+struct EvictionCost {
+    evicted: u32,
+    visited: u32,
 }
 
 impl Tables {
@@ -137,51 +160,39 @@ impl Tables {
 
     /// Non-blocking scan across all queued submissions (queues share an arena
     /// and can retire out of order).
-    fn retire_completed(&mut self) {
-        if self.in_flight.is_empty() {
-            return;
-        }
-        let mut i = 0;
-        while i < self.in_flight.len() {
-            let completed = self.in_flight[i].fence.completed_value();
-            if completed != u64::MAX && completed >= self.in_flight[i].value {
-                let batch = self.in_flight.swap_remove_back(i).expect("in-flight index valid");
-                for id in batch.ids {
-                    if let Some(&key) = self.by_id.get(&id)
-                        && let Some(entry) = self.ranges.get_mut(&key)
-                    {
-                        debug_assert!(entry.pins > 0);
-                        entry.pins = entry.pins.saturating_sub(1);
-                    }
-                }
-            } else {
-                i += 1;
-            }
+    fn retire_completed(&self, arena: &Arena) {
+        arena.retire_completed();
+    }
+
+    /// Insert a new resident table.
+    fn insert_entry(&mut self, arena: &Arena, key: (u32, u32), entry: TableEntry) {
+        arena
+            .pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(entry.id, entry.pins.clone());
+        self.by_id.insert(entry.id, key);
+        self.lru.insert((entry.last_used, key));
+        self.longest = self.longest.max(key.1);
+        self.ranges.insert(key, entry);
+    }
+
+    /// Record a use of a resident table.
+    fn touch(&mut self, key: (u32, u32), tick: u64) {
+        if let Some(entry) = self.ranges.get_mut(&key) {
+            self.lru.remove(&(entry.last_used, key));
+            entry.last_used = tick;
+            self.lru.insert((tick, key));
         }
     }
 
-    fn evict_oldest(&mut self, arena: &Arena, retired: &mut RetiredViews) -> bool {
-        let Some((&victim_key, _)) = self
-            .ranges
-            .iter()
-            .filter(|(_, entry)| entry.pins == 0 && !entry.direct_pinned)
-            .min_by_key(|&(key, entry)| (entry.last_used, *key))
-        else {
-            return false;
-        };
-        let victim = self.ranges.remove(&victim_key).expect("victim key exists");
-        self.by_id.remove(&victim.id);
-        let len = victim_key.1;
-        if arena.inline && !self.resident_records.is_empty() {
-            let start = victim.slot as usize;
-            let end = start + len as usize;
-            self.resident_records
-                .extract_if(start..end, |_, _| true)
-                .for_each(drop);
-        }
-        arena.clear_host_tracking(victim.slot, len, retired);
-        self.free.free(victim.slot, len, &mut self.used);
-        true
+    /// Remove a resident table from every index.
+    fn remove_entry(&mut self, arena: &Arena, key: (u32, u32)) -> Option<TableEntry> {
+        let entry = self.ranges.remove(&key)?;
+        self.lru.remove(&(entry.last_used, key));
+        self.by_id.remove(&entry.id);
+        arena.pins.lock().unwrap_or_else(|e| e.into_inner()).remove(&entry.id);
+        Some(entry)
     }
 
     fn try_alloc_contiguous(&mut self, limit: u32, length: u32) -> Option<u32> {
@@ -203,17 +214,89 @@ impl Tables {
         if let Some(slot) = self.try_alloc_contiguous(arena.limit, length) {
             return Ok(slot);
         }
-        self.retire_completed();
+        self.retire_completed(arena);
         if let Some(slot) = self.try_alloc_contiguous(arena.limit, length) {
             return Ok(slot);
         }
-        while self.evict_oldest(arena, retired) {
-            if let Some(slot) = self.try_alloc_contiguous(arena.limit, length) {
-                return Ok(slot);
-            }
+        let started = Instant::now();
+        let mut cost = EvictionCost::default();
+        let result = self.evict_until(arena, retired, &mut cost, |tables| {
+            tables.try_alloc_contiguous(arena.limit, length)
+        });
+        self.log_slow_eviction("table", length, started.elapsed(), &cost);
+        if result.is_none() {
+            self.log_exhausted(arena, length);
         }
-        self.log_exhausted(arena.limit, length);
-        Err(E_OUTOFMEMORY.into())
+        result.ok_or_else(|| E_OUTOFMEMORY.into())
+    }
+
+    /// Evict tables from the oldest use until `done` succeeds. Pinned tables
+    /// are skipped in one pass over the use order, so a request that needs
+    /// many evictions does not rescan the tables it already passed.
+    fn evict_until<T>(
+        &mut self,
+        arena: &Arena,
+        retired: &mut RetiredViews,
+        cost: &mut EvictionCost,
+        mut done: impl FnMut(&mut Self) -> Option<T>,
+    ) -> Option<T> {
+        let mut cursor: Option<(u64, (u32, u32))> = None;
+        loop {
+            let next = match cursor {
+                None => self.lru.iter().next().copied(),
+                Some(after) => self
+                    .lru
+                    .range((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded))
+                    .next()
+                    .copied(),
+            };
+            let (used, key) = next?;
+            cost.visited += 1;
+            let entry = &self.ranges[&key];
+            if entry.pinned() || entry.direct_pinned {
+                cursor = Some((used, key));
+                continue;
+            }
+            cost.evicted += 1;
+            let victim = self.remove_entry(arena, key).expect("victim key exists");
+            self.release_slots(arena, victim.slot, key.1, retired);
+            if let Some(value) = done(self) {
+                return Some(value);
+            }
+            cursor = Some((used, key));
+        }
+    }
+
+    /// Return an evicted table's shader-visible slots to the free spans.
+    fn release_slots(&mut self, arena: &Arena, slot: u32, len: u32, retired: &mut RetiredViews) {
+        if arena.inline && !self.resident_records.is_empty() {
+            let start = slot as usize;
+            let end = start + len as usize;
+            self.resident_records
+                .extract_if(start..end, |_, _| true)
+                .for_each(drop);
+        }
+        arena.clear_host_tracking(slot, len, retired);
+        self.free.free(slot, len, &mut self.used);
+    }
+
+    /// With diagnostic logging, report an allocation whose evictions were costly.
+    fn log_slow_eviction(&self, what: &str, needed: u32, elapsed: Duration, cost: &EvictionCost) {
+        if cost.evicted <= 64 && elapsed < Duration::from_millis(20) {
+            return;
+        }
+        static COUNT: AtomicU64 = AtomicU64::new(0);
+        let n = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 16 || n.is_power_of_two() {
+            crate::diagnostics::log(&format!(
+                "descriptor {what} eviction (#{n}): needed={needed} evicted={} visited={} tables={} largest_span={} took {:.1} ms",
+                cost.evicted,
+                cost.visited,
+                self.ranges.len(),
+                self.free.largest_span(),
+                elapsed.as_secs_f64() * 1000.0,
+            ));
+        }
     }
 
     fn ensure_direct_capacity(
@@ -229,21 +312,24 @@ impl Tables {
         if has_space(self) {
             return Ok(());
         }
-        self.retire_completed();
+        self.retire_completed(arena);
         if has_space(self) {
             return Ok(());
         }
-        while !has_space(self) {
-            if !self.evict_oldest(arena, retired) {
-                self.log_exhausted(arena.limit, needed);
-                return Err(E_OUTOFMEMORY.into());
-            }
+        let started = Instant::now();
+        let mut cost = EvictionCost::default();
+        let result = self.evict_until(arena, retired, &mut cost, |tables| has_space(tables).then_some(()));
+        self.log_slow_eviction("index map", needed, started.elapsed(), &cost);
+        if result.is_none() {
+            self.log_exhausted(arena, needed);
+            return Err(E_OUTOFMEMORY.into());
         }
         Ok(())
     }
 
-    fn log_exhausted(&self, limit: u32, needed: u32) {
-        let pinned = self.ranges.values().filter(|entry| entry.pins > 0).count();
+    fn log_exhausted(&self, arena: &Arena, needed: u32) {
+        let limit = arena.limit;
+        let pinned = self.ranges.values().filter(|entry| entry.pinned()).count();
         let direct_pinned = self.ranges.values().filter(|entry| entry.direct_pinned).count();
         let free_slots = self.free.free_slots();
         let largest_span = self.free.largest_span();
@@ -257,7 +343,7 @@ impl Tables {
                 self.ranges.len(),
                 pinned,
                 direct_pinned,
-                self.in_flight.len(),
+                arena.in_flight.lock().unwrap_or_else(|e| e.into_inner()).len(),
                 free_slots,
                 largest_span,
                 needed
@@ -316,6 +402,11 @@ pub(crate) struct Arena {
     // been referenced; a CPU descriptor update is published to each alias.
     tables: Mutex<Tables>,
     strides: Mutex<strides::Strides>,
+    // Submissions add and retire batches here without the `tables` lock, so
+    // ExecuteCommandLists never waits for a table allocation's evictions.
+    in_flight: Mutex<VecDeque<InFlightBatch>>,
+    // Pin counts of resident tables by id, shared with their entries.
+    pins: Mutex<HashMap<u64, Arc<AtomicU32>>>,
 }
 
 impl Drop for Arena {
@@ -433,6 +524,8 @@ impl Arena {
             authored: Mutex::default(),
             tables: Mutex::new(Tables::default()),
             strides: Mutex::default(),
+            in_flight: Mutex::default(),
+            pins: Mutex::default(),
         });
         let mut entries = registry.arenas.lock().unwrap_or_else(|e| e.into_inner());
         entries.insert(arena.base(), Arc::downgrade(&arena));
@@ -596,12 +689,10 @@ impl Arena {
     }
 
     fn pin_ids(&self, ids: &[u64]) {
-        let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
+        let pins = self.pins.lock().unwrap_or_else(|e| e.into_inner());
         for &id in ids {
-            if let Some(&key) = tables.by_id.get(&id)
-                && let Some(entry) = tables.ranges.get_mut(&key)
-            {
-                entry.pins = entry.pins.saturating_add(1);
+            if let Some(count) = pins.get(&id) {
+                count.fetch_add(1, Ordering::AcqRel);
             } else {
                 debug_assert!(false, "pin_ids called for non-resident table id {id}");
             }
@@ -609,25 +700,46 @@ impl Arena {
     }
 
     fn unpin_ids(&self, ids: impl IntoIterator<Item = u64>) {
-        let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
+        let pins = self.pins.lock().unwrap_or_else(|e| e.into_inner());
         for id in ids {
-            if let Some(&key) = tables.by_id.get(&id)
-                && let Some(entry) = tables.ranges.get_mut(&key)
-            {
-                debug_assert!(entry.pins > 0);
-                entry.pins = entry.pins.saturating_sub(1);
+            if let Some(count) = pins.get(&id) {
+                unpin(count);
             } else {
                 debug_assert!(false, "unpin_ids called for unknown table id {id}");
             }
         }
     }
 
+    /// Release the pins of every batch whose fence has completed. Takes only
+    /// the in-flight lock: the pins are shared with the resident entries.
+    fn retire_completed(&self) {
+        let mut in_flight = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
+        let mut i = 0;
+        while i < in_flight.len() {
+            let completed = in_flight[i].fence.completed_value();
+            if completed != u64::MAX && completed >= in_flight[i].value {
+                let batch = in_flight.swap_remove_back(i).expect("in-flight index valid");
+                for pins in &batch.pins {
+                    unpin(pins);
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     fn push_in_flight(&self, fence: RetireFence, value: u64, ids: Vec<u64>) {
-        let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
-        tables.retire_completed();
-        tables
-            .in_flight
-            .push_back(InFlightBatch { fence, value, ids });
+        // The submitted tables are pinned, so every id is resident.
+        let pins: Vec<_> = {
+            let pins = self.pins.lock().unwrap_or_else(|e| e.into_inner());
+            ids.iter().filter_map(|id| pins.get(id).cloned()).collect()
+        };
+        debug_assert_eq!(pins.len(), ids.len());
+        self.retire_completed();
+        self.in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push_back(InFlightBatch { fence, value, pins });
     }
 
     pub(crate) fn publish(&self, address: usize, count: u32) {

@@ -61,9 +61,10 @@ impl Arena {
             let tables = &mut *tables_guard;
             let key = (first, length);
             let tick = tables.next_tick();
-            let (entry_id, resident, fresh) = if let Some(entry) = tables.ranges.get_mut(&key) {
-                entry.last_used = tick;
-                (Some(entry.id), entry.slot, false)
+            let (entry_id, resident, fresh) = if let Some(entry) = tables.ranges.get(&key) {
+                let found = (Some(entry.id), entry.slot, false);
+                tables.touch(key, tick);
+                found
             } else if !self.inline && let Some(index) = tables.direct.contiguous(first, length) {
                 (None, index, false)
             } else {
@@ -72,18 +73,17 @@ impl Arena {
                     self.copy(first, slot, length, &mut retired);
                 }
                 let id = tables.alloc_id();
-                tables.longest = tables.longest.max(length);
-                tables.ranges.insert(
+                tables.insert_entry(
+                    self,
                     key,
                     TableEntry {
                         id,
                         slot,
-                        pins: 0,
+                        pins: Arc::default(),
                         direct_pinned: false,
                         last_used: tick,
                     },
                 );
-                tables.by_id.insert(id, key);
                 (Some(id), slot, true)
             };
             if self.inline {
@@ -166,8 +166,7 @@ impl Arena {
                 })();
                 if let Err(error) = inline_result {
                     if fresh {
-                        if let Some(entry) = tables.ranges.remove(&key) {
-                            tables.by_id.remove(&entry.id);
+                        if let Some(entry) = tables.remove_entry(self, key) {
                             let slot_start = entry.slot as usize;
                             let slot_end = slot_start + length as usize;
                             tables
@@ -186,9 +185,9 @@ impl Arena {
             {
                 let entry = tables
                     .ranges
-                    .get_mut(&key)
+                    .get(&key)
                     .expect("resident table entry present for pinning");
-                entry.pins = entry.pins.saturating_add(1);
+                entry.pins.fetch_add(1, Ordering::AcqRel);
                 leases.insert_reserved(self, id);
             }
             Ok(self.gpu_handle(resident))
