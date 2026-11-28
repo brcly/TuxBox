@@ -74,6 +74,9 @@ struct Recording {
     written_ranges: memory_wait::WrittenRanges,
     /// Fence label writes and waits, for explaining a stalled wait.
     labels: Vec<memory_wait::Label>,
+    /// The label writes of this recording, while they are still to be submitted:
+    /// a queue waiting on one of them holds for it (`memory_wait::note_recorded_write`).
+    label_writes: Option<Arc<memory_wait::LabelWrites>>,
     timestamp_page: Option<(ID3D12QueryHeap, u32)>,
     resources: device::MediaResources,
     scene_commands: Vec<raytracing::SceneCommand>,
@@ -263,6 +266,7 @@ unsafe extern "system" fn reset(
         state.resources = allocator.state.clone();
         state.timestamp_page = None;
         state.labels.clear();
+        state.label_writes = None;
         state.segments.clear();
         state.written_ranges.clear();
         state.scene_commands.clear();
@@ -312,6 +316,8 @@ unsafe extern "system" fn close(list: &List) -> HRESULT {
     }
     state.phase = ListState::Closed;
     if state.error.is_err() {
+        // A rejected list never runs: nothing waits for its label writes.
+        state.label_writes = None;
         memory_wait::note_list(
             ptr::from_ref(list).addr(),
             memory_wait::Fate::Dropped(state.error.0),
@@ -788,6 +794,7 @@ pub(crate) unsafe fn wrap_command_list(
             segments: Vec::new(),
             written_ranges: memory_wait::WrittenRanges::default(),
             labels: Vec::new(),
+            label_writes: None,
             timestamp_page: None,
             resources: allocator.state.clone(),
             scene_commands: Vec::new(),

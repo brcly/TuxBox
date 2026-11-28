@@ -16,7 +16,7 @@ pub(super) unsafe extern "system" fn write_marker(list: &List, address: u64, val
         write_dword(list, &mut state, address, value)
             .map(|()| {
                 state.record_write(address, 4);
-                state.labels.push(memory_wait::Label::write(address, u64::from(value)));
+                state.label_written(address, u64::from(value));
                 memory_wait::trace_write("Write32BitValueBottomOfPipeX", address, 4, u64::from(value));
             })
     };
@@ -50,7 +50,7 @@ pub(super) unsafe extern "system" fn write_value64(list: &List, address: u64, va
             .and_then(|()| write_dword(list, &mut state, address, value as u32))
             .map(|()| {
                 state.record_write(address, 8);
-                state.labels.push(memory_wait::Label::write(address, value));
+                state.label_written(address, value);
                 memory_wait::trace_write("Write64BitValueBottomOfPipeX", address, 8, value);
             })
     };

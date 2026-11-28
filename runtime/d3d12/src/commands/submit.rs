@@ -52,6 +52,16 @@ fn rejection_text(kind: D3D12_COMMAND_LIST_TYPE, error: HRESULT) -> String {
     )
 }
 
+/// The lists of a batch its queue does not run write no labels, so they hold
+/// no queue that waits on one.
+unsafe fn forget_label_writes(queue: &Queue, guest: &[*mut c_void]) {
+    for &item in guest {
+        if let Some(list) = unsafe { guest_list(item, parent(&queue.parent)) } {
+            recording(list).label_writes = None;
+        }
+    }
+}
+
 pub(super) unsafe extern "system" fn execute_frame(
     queue: &Queue, count: u32, lists: *const *mut c_void, frame_token: u64, flags: u32,
 ) {
@@ -64,6 +74,9 @@ pub(super) unsafe extern "system" fn execute_frame(
     if flags & !3 != 0 {
         crate::diagnostics::recording_error(format_args!("extended command-list submission flags {flags:#x}"));
         reject(queue, E_NOTIMPL);
+        if !lists.is_null() {
+            unsafe { forget_label_writes(queue, slice::from_raw_parts(lists, count as usize)) };
+        }
         return;
     }
     unsafe { execute_batch(queue, count, lists, Some((frame_token, flags))) };
@@ -80,7 +93,8 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     *submitted = true;
-    if queue.state.placement.error.load(Ordering::Acquire) < 0 || count == 0 {
+    let dropped = queue.state.placement.error.load(Ordering::Acquire) < 0;
+    if count == 0 || (dropped && lists.is_null()) {
         return;
     }
     if lists.is_null() {
@@ -88,6 +102,10 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
         return;
     }
     let guest = unsafe { slice::from_raw_parts(lists, count as usize) };
+    if dropped {
+        unsafe { forget_label_writes(queue, guest) };
+        return;
+    }
     // Mirrors exist only when a constant-buffer or address-SRV import failed.
     // The count is zero for every boot that has not hit that path.
     crate::device::snapshot_cbv_mirrors();
@@ -102,6 +120,9 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
     let read_views = std::cell::RefCell::new(Vec::new());
     // The lists in this batch that write or wait on fence labels.
     let batch = std::cell::RefCell::new(String::new());
+    // Their label writes, which hold the other queues' waits on those labels
+    // until this batch has run. A batch that is rejected writes none.
+    let label_writes = std::cell::RefCell::new(Vec::new());
     let result = translate_batch(
         guest,
         (
@@ -115,7 +136,7 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
         ),
         |&item, (textures, writes, shader_views, scene_lists, splits, batch_writes, pending)| {
             let list = unsafe { guest_list(item, parent(&queue.parent)) }.ok_or(E_INVALIDARG)?;
-            let state = recording(list);
+            let mut state = recording(list);
             if !matches!(state.phase, ListState::Closed)
                 || state.error.is_err()
                 || state.list_type != queue.state.kind
@@ -144,6 +165,7 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
                 memory_wait::Fate::Submitted(queue.state.kind.0),
                 &state.labels,
             );
+            label_writes.borrow_mut().extend(state.label_writes.take());
             if !state.labels.is_empty() {
                 use std::fmt::Write;
                 let _ = write!(batch.borrow_mut(), " {:#x}", ptr::from_ref(list).addr());
@@ -236,25 +258,18 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
                             None,
                         );
                         if !batch_writes.is_empty() {
-                            if let Some((fence, value)) = progress {
-                                memory_wait::record_in_flight_writes(
-                                    device_key,
-                                    fence,
-                                    value,
-                                    batch_writes,
-                                );
-                            } else {
-                                let rf = queue.state.retire_fence(&queue.native)?;
-                                let val = rf.next.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
-                                let val = if val == u64::MAX { 1 } else { val };
-                                queue.native.Signal(&rf.fence, val)?;
-                                memory_wait::record_in_flight_writes(
-                                    device_key,
-                                    rf.fence.clone(),
-                                    val,
-                                    batch_writes,
-                                );
-                            }
+                            let (fence, value) = match progress {
+                                Some(progress) => progress,
+                                None => {
+                                    let rf = queue.state.retire_fence(&queue.native)?;
+                                    let val = rf.next.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+                                    let val = if val == u64::MAX { 1 } else { val };
+                                    queue.native.Signal(&rf.fence, val)?;
+                                    (rf.fence.clone(), val)
+                                }
+                            };
+                            memory_wait::label_writes_submitted(label_writes.take(), &queue.native, &fence, value);
+                            memory_wait::record_in_flight_writes(device_key, fence, value, batch_writes);
                         }
                         if !trace_samples.borrow().is_empty() {
                             let mut device: Option<ID3D12Device> = None;
@@ -279,6 +294,7 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
         },
     );
     if let Err(error) = result {
+        unsafe { forget_label_writes(queue, guest) };
         reject(queue, error);
     } else if let Some((token, flags)) = frame {
         static FIRST: [std::sync::Once;4] = [const { std::sync::Once::new() };4];

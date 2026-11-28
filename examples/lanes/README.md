@@ -40,6 +40,7 @@ The game also imports Windows core API sets for services such as files, timing a
 | --- | --- |
 | `labels` | `Write32BitValueBottomOfPipeX` and `Write64BitValueBottomOfPipeX`, with and without a flush |
 | `cross-queue` | The compute queue waits for a direct-queue label, writes a 64-bit payload and signals a reply. The direct queue waits for the reply and copies the payload for CPU readback. |
+| `cross-queue-late` | The compute queue waits for a label whose write the direct queue has recorded and submits six seconds later. The compute queue must not run before that write. |
 | `compute-frame` | `ExecuteCommandListsX` on a compute queue |
 | `skipped-command` | A command that cannot be recorded leaves its list, and the list's fence write, intact |
 | `copy-memory` | `CopyMemoryToMemoryX` copies from the source to the destination |

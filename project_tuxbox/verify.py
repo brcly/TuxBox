@@ -31,7 +31,7 @@ BASE_SUITES = ("cpu", "xmem", "xapu", "xgameruntime", "xcrdapi", "graphics", "gr
 OPTIONAL_PROVIDERS = {"dxc-utils": "dxc-utils/dxcompiler.dll", "xg": "xg/xg_xs.dll"}
 SUITES = (*BASE_SUITES, "d3d12-mesh", *OPTIONAL_PROVIDERS)
 # The scenarios of `lanes.exe --selftest`, one gate each.
-LANES_SCENARIOS = ("labels", "cross-queue", "compute-frame", "skipped-command", "copy-memory", "shared-texture",
+LANES_SCENARIOS = ("labels", "cross-queue", "cross-queue-late", "compute-frame", "skipped-command", "copy-memory", "shared-texture",
                    "indirect-dispatch", "gpu-indirect-dispatch", "gpu-indirect-order", "mesh-signature",
                    "dispatch-wait", "direct-copy-wait", "texture-readback", "texture-publication",
                    "ray-tracing-builder", "thread-dimensions",
@@ -1491,6 +1491,7 @@ GATE_LABELS = {
     "lanes-overlay": "TuxBox's performance panel on screen over Lanes",
     "lanes-selftest-labels": "Bottom-of-pipe label writes with and without a flush",
     "lanes-selftest-cross-queue": "Compute and direct queues waiting on each other's labels",
+    "lanes-selftest-cross-queue-late": "A compute queue held for a label whose recorded write is submitted six seconds later",
     "lanes-selftest-compute-frame": "Compute queue frame submission",
     "lanes-selftest-skipped-command": "A skipped command leaving its list and fence write intact",
     "lanes-selftest-copy-memory": "CopyMemoryToMemoryX direction and contents",
