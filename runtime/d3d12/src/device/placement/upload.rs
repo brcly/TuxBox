@@ -1,7 +1,9 @@
 //! Fence a private copy queue against the guest queues that read these textures.
+use super::budget::Meter;
 use super::residency::Held;
 use super::{Digest, Texture, committed, lock};
 use core::mem::ManuallyDrop;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::VecDeque, sync::Arc};
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG, E_OUTOFMEMORY, HANDLE};
 use windows::Win32::Graphics::{Direct3D12::*, Dxgi::Common::DXGI_SAMPLE_DESC};
@@ -22,6 +24,20 @@ pub(super) struct Upload {
     _allocator: ID3D12CommandAllocator,
     list: ID3D12CommandList,
     _textures: Vec<Held>,
+    staging: u64,
+}
+
+/// Staging bytes of uploads the transfer queue has not released.
+static IN_FLIGHT: AtomicU64 = AtomicU64::new(0);
+
+pub(super) fn staging_in_flight() -> u64 {
+    IN_FLIGHT.load(Ordering::Relaxed)
+}
+
+impl Drop for Upload {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(self.staging, Ordering::Relaxed);
+    }
 }
 
 /// What work queued on the transfer queue holds until its fence value.
@@ -44,6 +60,8 @@ pub(super) struct Transfer {
     pub(super) failed: Option<HRESULT>,
     pending: VecDeque<(u64, Pending)>,
     scratch: Vec<u8>,
+    /// The adapter's memory, asked before images are backed.
+    pub(super) meter: Option<Meter>,
 }
 
 impl Transfer {
@@ -59,6 +77,7 @@ impl Transfer {
             failed: None,
             pending: VecDeque::new(),
             scratch: Vec::new(),
+            meter: None,
         })
     }
 
@@ -269,11 +288,14 @@ impl Upload {
         unsafe {
             list.Close()?;
         }
+        let list = list.cast()?;
+        IN_FLIGHT.fetch_add(total, Ordering::Relaxed);
         Ok(Self {
             _buffer: buffer,
             _allocator: allocator,
-            list: list.cast()?,
+            list,
             _textures: held,
+            staging: total,
         })
     }
 }

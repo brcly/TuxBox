@@ -39,6 +39,7 @@ pub(super) struct DxgiDevice {
     pub(super) depth_views: std::sync::Arc<super::placement::Views<super::stencil::Surface>>,
     pub(super) disposal: std::sync::Mutex<Option<(super::DisposeCallback, usize)>>,
     pub(super) frames: super::frame_events::FrameEvents,
+    pub(super) deferred: super::deferred::Deferred,
 }
 
 const _: () =
@@ -74,6 +75,7 @@ impl DxgiDevice {
             host: Default::default(),
             depth_views: Default::default(),
             frames: Default::default(),
+            deferred: Default::default(),
             disposal: Default::default(),
             blas: Default::default(),
             media: Default::default(),
