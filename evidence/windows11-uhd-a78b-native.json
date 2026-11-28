@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "type": "homebrew",
-  "date_utc": "2026-11-27",
+  "date_utc": "2026-11-28",
   "host": "Windows",
   "os_release": "11",
   "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
@@ -11,7 +11,7 @@
   "binaries_sha256": {
     "route-game.exe": "26dc7c3e8c0e6395fc740e1410bc520c0c93dfee1f48a3d96ab9d0d86983d71c",
     "d3d12-smoke/d3d12-signatures.exe": "94792a9a03d7083ed3b302c96784dcaf09cc29cdc78bf1edf9c162a2f19c7d53",
-    "d3d12-smoke/d3d12_xs.dll": "60c151c506c65379ed133820067e8e2e794b91a9510dc4d533e641fd875afae0",
+    "d3d12-smoke/d3d12_xs.dll": "84a88b873e13ea06b89d1c2e7cf666e8877a0c32ed4900e66e526f74016f7889",
     "d3d12-smoke/d3d12-guids.exe": "822766997a6eb0476ed7271f424879104241789da779d3ce3e7ccc5095c5db43",
     "xg-provider/xg-dcc.exe": "2c0c9e3f6aa742d931c13085559f829e37a3bac268a00c4472002184cb33ade6",
     "xg-provider/xg_xs.dll": "6da73ef2c26e23df3143a7039024bfeb69d99c9c603e0b3edc6d875f926d40a7",
@@ -21,39 +21,40 @@
     "xgameruntime/xgameruntime.dll": "b3cc09825d8c6492f84d28a69c6538c49d99143d58b3bf90450ef3ba17ecdff1",
     "xapu/xapu-control.exe": "4983a1719aaf20c47e0fbac4de3a2f64b88d6f267dacd9c4649aaf327945c8c6",
     "xapu/xapu.dll": "996160148a5b3dd24bfed81bd26d9dee5acaa139fa87a0b94b1dcad44e28edcb",
-    "xcrdapi/xcrdapi-read.exe": "c22c456474bc14b17cb840917dd215056777f19b4da47d82e8c203c3091d7265",
-    "xcrdapi/xcrdapi.dll": "4413d382eaec55a653e77f9527c17f60e507c705428a2b5d14fb08cfdd70e0d9",
-    "xmem-smoke/xmem-smoke.exe": "1bc98b63ecaedefd0a6b69d83162044efe332d7f295eb19d8084a07273f9b70a",
-    "xmem-smoke/xmem.dll": "5437e1c6ccb1d0c24dbd237b85a2513b909a4bb6aa7a4ed354beb99cd5981165",
+    "xcrdapi/xcrdapi-read.exe": "080715cb02f61feff98839b879cb18407b04949e22c652229a3eddd1d65f0394",
+    "xcrdapi/xcrdapi.dll": "25e124003af8c193178df4ccbcf14b2f3c5ccc0cf417c8d3b8083f743d282d85",
+    "xmem-smoke/xmem.dll": "d0d783672041243b7bf80fb1c4941768724b88fc8c09d0016666ee18c0a9e2f1",
+    "xmem-smoke/xmem-smoke.exe": "fec54610b297d6ca0913b11f89279a3d67777adf7ea183837adc1f34bc5e1f43",
     "xmem-smoke/xmem-http.exe": "e0bab77febfa73df9317c5c554cd5eadd27e7ffa42b7bc1884273c59b11fce25",
     "xmem-smoke/tuxbox_xhttp.dll": "0404f84f3bc22842cc7b94280f8bba4f03957c7424336f4a8c521fd8c7b17d10",
     "xmem-smoke/xmem-partitions.exe": "38d7e62cd2a27f292c6632985023f2b9deb67ba3d576028c1d643ab3ccb27fce",
     "graphics/desktop-clear.exe": "6b6d66c0ba0858474cb95de5f721ba05a3a09e19847f36582099a3d6d012ae6d",
-    "d3d12-smoke/d3d12-root-smoke.exe": "ed80fb8635722e94a14af9e6671b60356fe3c2c9fd77a4cb8448d20fcfd50034",
+    "d3d12-smoke/d3d12-root-smoke.exe": "2cee41bf7989b189b67bf3d86276f101b1fbf7c307df9c85bad9fa77cc13667f",
     "d3d12-smoke/d3d12-exports.exe": "704ff8b45b1e2e197ce42f0be1fc86085dbe2ba9f4bce0a9e6740def5c2ccf16",
     "d3d12-smoke/d3d12-features.exe": "1adbd5885a419b1292cd8ef0cb66447f05f403e101f3ef6dc28db52ab4f32b65",
     "d3d12-smoke/d3d12-heaps.exe": "282d86339d32f6dbb2164194c9515ea60b3e539f846bfcf46ae42fa0d415b287",
     "d3d12-smoke/d3d12-placement.exe": "2b6f81d75a1b3e588741eaed62b1b9e39c2acd882bea07d2308523904a023665",
-    "d3d12-smoke/d3d12-copy-resource.exe": "e6dc4af55a7ff7a76b8be026f2243b4071ab858b035ccc00a1b5dae697d7da26",
-    "d3d12-smoke/d3d12-draw.exe": "6ef2effb58eb081accf15f0d3983013836dabe74b9ce9a176f9ffe26fcc0ae8f",
+    "d3d12-smoke/d3d12-copy-resource.exe": "dd119718fa6a40bf9556197bf8a762a5dcae874e5e38d9104948abf0378657ff",
+    "d3d12-smoke/d3d12-draw.exe": "a2033b68e322d5e02d973f3e50199a61456630e8fba96da692c22855f71ca704",
     "d3d12-smoke/d3d12-frame-events.exe": "d9441f12fe8565dd9e2b23b6c421f25c95f440107bec079f90f45660228e3463",
-    "d3d12-smoke/d3d12-tables.exe": "288b137c72624973b167ab3c1c347bf97dac1782698fbe9f020a601097289d66",
+    "d3d12-smoke/d3d12-tables.exe": "e3b367891c5a6353a2214ec6f0e9f444ae655b153e7dc3e8e781b0afc292ee19",
     "d3d12-smoke/d3d12-queues.exe": "3a419c25759401daa22cf2af895e488772142d68f2a5f008132d79c231e6cfa6",
     "d3d12-smoke/d3d12-queries.exe": "182f9a87606afcb52a1d97987234a1066c2101950c7ed9029fee5daf51aad72c",
-    "d3d12-smoke/d3d12-indirect.exe": "c9ce05f3fde1283aaf0c9908a8c2c23177af00589ab8ae6275d72a397f602db5",
+    "d3d12-smoke/d3d12-indirect.exe": "f0771fb8bf9f4e2d6048ff677a7179b54fc63682892d9f17ebee75651732d5ba",
     "d3d12-smoke/d3d12-factory.exe": "11dc1590d2558338dc73e244f7906da32018220be682178404171d0fb8f7121c",
-    "d3d12-smoke/xbox-frame.exe": "967b66d67c34a103936fc41b70b06a0c0ea4bd16760b3639f79d8392176f08d3",
-    "d3d12-smoke/xbox-frame-rgb10.exe": "5d9b0c25f6f99d2b09109f375d6ccf15c434925b9adf0a9f656605ce659b30f5",
+    "d3d12-smoke/xbox-frame.exe": "540e5fac662c3e68aab8b6dd3c7dc529a47826ede4a3caa7dead3ec118228389",
+    "d3d12-smoke/xbox-frame-rgb10.exe": "15cd78183d36210d3522ae7bda6aa599798fc404c6b8e666c8cfaaa97a651c9e",
     "d3d12-smoke/xbox-frame-negative.exe": "ae3fa41c4ca89289a839f9fd0bf7ce01b4f9c5eef860d1eb97a41dd56b84d4c1",
-    "d3d12-smoke/xbox-frame-4k.exe": "1de301eaefa069b638c7d885072295c335498e3382948afed020d52bcd58486a",
+    "d3d12-smoke/xbox-frame-planes.exe": "baea0025fdedf2ee37f6d5f019a04f6bab5374b33118ec9e092da9ea4b7dc26d",
+    "d3d12-smoke/xbox-frame-4k.exe": "811a155cce117cdf7f832589d6f7b97e02b871299d98df89f22af1d5d09179e1",
     "d3d12-smoke/splash/MicrosoftGame.Config": "ceb3fe0254adc74e89f61d03f60ed296930000d93ab20d1374cb4b72917de991",
-    "d3d12-smoke/splash/splash.png": "0c73c50aac642a4c905e75dbc76510e35f2f9c2ab86f87e98d5a4ca9824b3f93",
-    "lanes/lanes.exe": "35ce8defb29f63210bd6cc93052924d1fae7898bbf8e7a9da9b6fc808ea1d25c",
-    "lanes/xmem.dll": "5437e1c6ccb1d0c24dbd237b85a2513b909a4bb6aa7a4ed354beb99cd5981165",
+    "d3d12-smoke/splash/splash.png": "507c92b28986bd934d32e12241f4981fe2430aeaa5a9678c79cd9fa6b9703102",
+    "lanes/lanes.exe": "3267f06bd57ba2ce1e598198fd971f00703d8dd42bf8dc09bd81ffe7ce35cfc8",
+    "lanes/xmem.dll": "d0d783672041243b7bf80fb1c4941768724b88fc8c09d0016666ee18c0a9e2f1",
     "lanes/GameInput.dll": "7f619faa6482db559ebd1e78528f6943085fac6a3d1df72b55d95175d8f82f43",
-    "lanes/d3d12_xs.dll": "60c151c506c65379ed133820067e8e2e794b91a9510dc4d533e641fd875afae0",
+    "lanes/d3d12_xs.dll": "84a88b873e13ea06b89d1c2e7cf666e8877a0c32ed4900e66e526f74016f7889",
     "lanes/MicrosoftGame.config": "154a9997eec13fc71e1e473b0423ea3c58fa8071a43a0cee8fdb1ce45d5d2551",
-    "lanes/XboxBvhBuilder.dll": "286754126c8c8926fb55acc013c7bf990eaffdbfd069db6e27e270253bf14c92"
+    "lanes/XboxBvhBuilder.dll": "2c95401d135c70945a0482ec3cf44272e52f4aadd6301a3c3b1f80d13cd2e010"
   },
   "checks": [
     {
@@ -82,7 +83,7 @@
     },
     {
       "gate": "d3d12-guids",
-      "passed": false,
+      "passed": true,
       "exit_code": 0,
       "receipt": "d3d12-guids PASS identifiers=32 bytes=512"
     },
@@ -126,13 +127,13 @@
       "gate": "xcrdapi",
       "passed": true,
       "exit_code": 0,
-      "receipt": "raw=16 zlib=16 guards=2 errors=2 cancellation=1 autosubmit=64 PASS"
+      "receipt": "raw=16 zlib=16 guards=2 errors=2 cancellation=2 bc1=4 bc7=2 pages=2 autosubmit=64 PASS"
     },
     {
       "gate": "xmem-heaps",
-      "passed": false,
-      "exit_code": 1,
-      "receipt": "xmem-default failed at line 530: heap && XMemGetWin32HeapStatistics(heap, before) && before[0] > 0\nxmem-default failed at line 803: !heap_diagnostics()"
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-heaps PASS title=1 private=4 invalid=2 pool-commits=2 pool-decommits=2 heap-callbacks=2 stats=1 dump=1 history=2 page-classes=3"
     },
     {
       "gate": "xmem-heap-profiles",
@@ -142,9 +143,9 @@
     },
     {
       "gate": "xmem-virtual-cpu",
-      "passed": false,
-      "exit_code": 1,
-      "receipt": "xmem-default failed at line 221: VirtualQuery(base, &area, sizeof area) == sizeof area && area.Protect == protections[i]\nxmem-default failed at line 817: !virtual_cpu_profiles()"
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xmem-virtual-cpu PASS protections=6 allocations=12 guards=5 invalid=1"
     },
     {
       "gate": "xmem-scatter",
@@ -226,9 +227,9 @@
     },
     {
       "gate": "d3d12-heaps",
-      "passed": false,
-      "exit_code": 1,
-      "receipt": "d3d12-heaps failed: four pageable priorities failed: 0x80070057"
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-heaps PASS pci=8086:a78b heap=32MiB offsets=0,65536 words=256/256 invalid=4 display=3840x2160/RGB10A2 pixel=c00ffc00 volume=45/45 priorities=4/4 invalid_priority_calls=4"
     },
     {
       "gate": "d3d12-placement",
@@ -268,15 +269,15 @@
     },
     {
       "gate": "d3d12-queries",
-      "passed": false,
-      "exit_code": 1,
-      "receipt": "d3d12-queries failed: descriptor heap handle mismatch"
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-queries PASS pci=8086:a78b timestamps=2 occlusion=0 guards=2 heaps=6 rejected=3"
     },
     {
       "gate": "d3d12-indirect",
-      "passed": false,
-      "exit_code": 3221225477,
-      "receipt": ""
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "d3d12-indirect PASS pci=8086:a78b sdk=0x20004 device=41 list=59 words=64/64 counts=direct,one,zero flush=global,range,wake-up(0x3000:0+0xa30000),zero-length,global-range budget=default,rejected2 mesh=0x80004001 rays=0x80004001"
     },
     {
       "gate": "d3d12-stream",
@@ -310,43 +311,49 @@
     },
     {
       "gate": "guest-present",
-      "passed": false,
-      "exit_code": 1,
-      "receipt": "xbox-frame failed: screen colors on frame 1: 0x4b3841/0x2e1c24/0x4b3841/0xcb5b11/0xcb5b11, expected 0xcb5b11 border and 0xcb5b11 center"
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=8086:a78b submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 displayed=2/2"
     },
     {
       "gate": "guest-present-rgb10",
-      "passed": false,
-      "exit_code": 1,
-      "receipt": "xbox-frame failed: screen colors on frame 1: 0x4b3841/0x2e1c24/0x4b3841/0xffff00/0xffff00, expected 0xffff00 border and 0xffff00 center"
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=8086:a78b submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2"
+    },
+    {
+      "gate": "guest-present-planes",
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=8086:a78b submissions=2 snapshots=2 pixels=962/962 inset=208 guards=3 fence=2 compute_fence=7 displayed=2/2 planes=2"
     },
     {
       "gate": "guest-present-4k-owned",
       "passed": false,
       "exit_code": 1,
-      "receipt": "xbox-frame failed: screen colors on frame 1: 0x4b3841/0x4b3841/0x1f1f1d/0x171716/0x7f7f7f, expected 0xffff00 border and 0xffff00 center client=1447x813 origin=8,38 monitor=1463x866"
+      "receipt": "xbox-frame failed: screen colors on frame 1: 0x1f1f1f/0x191919/0x1f1f1f/0x191919/0xfbf7f5, expected 0xffff00 border and 0xffff00 center client=1447x813 origin=8,38 monitor=1463x866"
     },
     {
       "gate": "guest-present-4k-oversized",
-      "passed": false,
-      "exit_code": 1,
-      "receipt": "xbox-frame failed: screen colors on frame 2: 0xffff00/0xffff00/0xffff00/0xff/0xffff00, expected 0xffff00 border and 0xff center client=1463x822 origin=0,22 monitor=1463x866"
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=8086:a78b submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=1463x822 origin=0,22 monitor=1463x866"
     },
     {
       "gate": "guest-present-4k-fit",
-      "passed": false,
-      "exit_code": 1,
-      "receipt": "xbox-frame failed: screen colors on frame 2: 0xffff00/0xffff00/0xffff00/0xff/0xffff00, expected 0xffff00 border and 0xff center client=960x540 origin=24,24 monitor=1463x866"
+      "passed": true,
+      "exit_code": 0,
+      "receipt": "xbox-frame PASS pci=8086:a78b submissions=2 snapshots=2 pixels=16588800/16588800 inset=921600 guards=3 fence=2 compute_fence=7 format=rgb10a2 displayed=2/2 client=960x540 origin=24,24 monitor=1463x866"
     },
     {
       "gate": "guest-present-4k-splash",
       "passed": false,
       "exit_code": 1,
-      "receipt": "xbox-frame failed: the package splash did not appear screen=0x4b3841/0x4b3841/0x1f1f1d/0x171716/0x7f7f7f"
+      "receipt": "xbox-frame failed: the package splash did not appear screen=0x1f1f1f/0x191919/0x1f1f1f/0x191919/0xfbf7f5 client=1447x813 origin=8,38 monitor=1463x866"
     },
     {
       "gate": "lanes-overlay",
-      "passed": false,
+      "passed": true,
       "guest_import_modules": [
         "api-ms-win-core-console-l1-1-0.dll",
         "api-ms-win-core-debug-l1-1-0.dll",
@@ -376,8 +383,8 @@
         "gameinput.dll",
         "xmem.dll"
       ],
-      "exit_code": 1,
-      "receipt": "lanes-replay FAIL performance panel not on screen: sampled 0x5a4e50 and 0x171716"
+      "exit_code": 0,
+      "receipt": "lanes-replay PASS pci=8086:a78b course=16/16 win=16/16 safe-miss=1 collision=1 frames=2 input=gameinput panel=1"
     },
     {
       "gate": "lanes-xbox-replay",
@@ -485,6 +492,41 @@
       "receipt": "lanes-selftest PASS pci=8086:a78b scenario=cross-queue passed=1"
     },
     {
+      "gate": "lanes-selftest-cross-queue-late",
+      "passed": true,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-1.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-memory-l1-1-0.dll",
+        "api-ms-win-core-memory-l1-1-1.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 0,
+      "receipt": "lanes-selftest PASS pci=8086:a78b scenario=cross-queue-late passed=1"
+    },
+    {
       "gate": "lanes-selftest-compute-frame",
       "passed": true,
       "guest_import_modules": [
@@ -521,7 +563,7 @@
     },
     {
       "gate": "lanes-selftest-skipped-command",
-      "passed": false,
+      "passed": true,
       "guest_import_modules": [
         "api-ms-win-core-console-l1-1-0.dll",
         "api-ms-win-core-debug-l1-1-0.dll",
@@ -551,8 +593,8 @@
         "gameinput.dll",
         "xmem.dll"
       ],
-      "exit_code": 1,
-      "receipt": "lanes-selftest FAIL skipped-command: close list failed: 0x80004001"
+      "exit_code": 0,
+      "receipt": "lanes-selftest PASS pci=8086:a78b scenario=skipped-command passed=1"
     },
     {
       "gate": "lanes-selftest-copy-memory",
@@ -730,6 +772,41 @@
       "receipt": "lanes-selftest PASS pci=8086:a78b scenario=gpu-indirect-order passed=1"
     },
     {
+      "gate": "lanes-selftest-mesh-signature",
+      "passed": true,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-1.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-memory-l1-1-0.dll",
+        "api-ms-win-core-memory-l1-1-1.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 0,
+      "receipt": "lanes-selftest PASS pci=8086:a78b scenario=mesh-signature passed=1"
+    },
+    {
       "gate": "lanes-selftest-dispatch-wait",
       "passed": true,
       "guest_import_modules": [
@@ -905,6 +982,76 @@
       "receipt": "lanes-selftest FAIL ray-tracing-builder: no prebuild sizes; ray tracing is unavailable"
     },
     {
+      "gate": "lanes-selftest-ray-tracing-guest-memory",
+      "passed": false,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-1.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-memory-l1-1-0.dll",
+        "api-ms-win-core-memory-l1-1-1.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 1,
+      "receipt": "lanes-selftest FAIL ray-tracing-guest-memory: no prebuild sizes; ray tracing is unavailable"
+    },
+    {
+      "gate": "lanes-selftest-ray-tracing-rehydrate",
+      "passed": false,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-1.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-memory-l1-1-0.dll",
+        "api-ms-win-core-memory-l1-1-1.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 1,
+      "receipt": "lanes-selftest FAIL ray-tracing-rehydrate: no prebuild sizes; ray tracing is unavailable"
+    },
+    {
       "gate": "lanes-selftest-thread-dimensions",
       "passed": true,
       "guest_import_modules": [
@@ -941,7 +1088,7 @@
     },
     {
       "gate": "lanes-selftest-descriptor-reclaim",
-      "passed": false,
+      "passed": true,
       "guest_import_modules": [
         "api-ms-win-core-console-l1-1-0.dll",
         "api-ms-win-core-debug-l1-1-0.dll",
@@ -971,8 +1118,8 @@
         "gameinput.dll",
         "xmem.dll"
       ],
-      "exit_code": 1,
-      "receipt": "lanes-selftest FAIL descriptor-reclaim: create oversized view heap failed: 0x8007000e"
+      "exit_code": 0,
+      "receipt": "lanes-selftest PASS pci=8086:a78b scenario=descriptor-reclaim passed=1"
     },
     {
       "gate": "lanes-selftest-unwritten-descriptors",
@@ -1010,6 +1157,76 @@
       "receipt": "lanes-selftest PASS pci=8086:a78b scenario=unwritten-descriptors passed=1"
     },
     {
+      "gate": "lanes-selftest-descriptor-reclaim-split",
+      "passed": true,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-1.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-memory-l1-1-0.dll",
+        "api-ms-win-core-memory-l1-1-1.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 0,
+      "receipt": "lanes-selftest PASS pci=8086:a78b scenario=descriptor-reclaim passed=1"
+    },
+    {
+      "gate": "lanes-selftest-mesh-signature-none",
+      "passed": true,
+      "guest_import_modules": [
+        "api-ms-win-core-console-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll",
+        "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll",
+        "api-ms-win-core-file-l1-1-0.dll",
+        "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll",
+        "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-0.dll",
+        "api-ms-win-core-libraryloader-l1-2-1.dll",
+        "api-ms-win-core-localization-l1-2-0.dll",
+        "api-ms-win-core-memory-l1-1-0.dll",
+        "api-ms-win-core-memory-l1-1-1.dll",
+        "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll",
+        "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll",
+        "d3d12_xs.dll",
+        "gameinput.dll",
+        "xmem.dll"
+      ],
+      "exit_code": 0,
+      "receipt": "lanes-selftest PASS pci=8086:a78b scenario=mesh-signature-none passed=1"
+    },
+    {
       "gate": "lanes-benchmark",
       "passed": true,
       "guest_import_modules": [
@@ -1042,13 +1259,13 @@
         "xmem.dll"
       ],
       "exit_code": 0,
-      "receipt": "lanes-benchmark PASS pci=8086:a78b submit_us=234.2 roundtrip_us=404.0 copy64k_us=329.5 frame_us=642.1 frame_p99_us=991.9"
+      "receipt": "lanes-benchmark PASS pci=8086:a78b submit_us=527.9 roundtrip_us=2554.9 copy64k_us=3040.6 frame_us=2157.2 frame_p99_us=5878.7"
     },
     {
       "gate": "cpu-replay",
       "passed": true,
       "exit_code": 0,
-      "receipt": "route-bench routes=65536 moves=8388608 checksum=24316bf89788468d elapsed_ticks=702657 frequency=10000000"
+      "receipt": "route-bench routes=65536 moves=8388608 checksum=24316bf89788468d elapsed_ticks=1106722 frequency=10000000"
     }
   ]
 }
