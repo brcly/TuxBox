@@ -280,7 +280,8 @@ class GuestWatch(unittest.TestCase):
         self.assertFalse(stages.guest_gone(["S", "Z"], seen=True))
         self.assertTrue(stages.guest_gone(["Z"], seen=True))
         self.assertTrue(stages.guest_gone([], seen=True))
-        child = subprocess.Popen(["sh", "-c", "sleep 30"])
+        # A shell given one command can replace itself with it, leaving no child.
+        child = subprocess.Popen(["sh", "-c", "sleep 30; :"])
         try:
             for _ in range(50):
                 if stages.process_states(child.pid, "sleep"):
