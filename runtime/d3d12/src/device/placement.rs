@@ -1,4 +1,5 @@
 //! Keep CPU-backed tiled Xbox textures coherent with their desktop images.
+mod budget;
 mod descriptors;
 mod digest;
 mod guarded_copy;
@@ -436,6 +437,7 @@ struct PlacementMemory {
     // Equal descriptors at the same VA name the same image, including writes
     // made before the title creates a second resource proxy for it.
     images: Arc<Images>,
+    ledger: budget::Ledger,
     submissions: Mutex<Option<Submissions>>,
     failed: Arc<AtomicI32>,
 }
@@ -656,6 +658,7 @@ pub(crate) unsafe fn submit(
 ) -> Result<()> {
     let device = unsafe { &*device.cast::<Device>() };
     let placements = &device.state.placements;
+    placements.memory.ledger.report(&device.native, &placements.memory.images);
     let first = writes.len();
     placements.views.gather(heaps, read_heaps, textures, writes);
     for texture in &writes[first..] {

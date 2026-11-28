@@ -7,7 +7,7 @@
 //! ahead of the first batch, copy or upload that touches it. Unmapped tiles are
 //! never read: every GPU use of a placed texture passes through `submit` or a
 //! CPU write flush, and both back the image first.
-use super::{Texture, lock};
+use super::{Texture, budget, lock};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use windows::Win32::Graphics::Direct3D12::*;
@@ -25,8 +25,23 @@ pub(super) struct Held {
 pub(super) enum Residency {
     /// Created with its own memory.
     Committed,
-    /// Reserved; `heap` is set once its tiles are mapped.
-    Reserved { tiles: u32, heap: OnceLock<ID3D12Heap> },
+    /// Reserved; `backing` is set once its tiles are mapped.
+    Reserved { tiles: u32, backing: OnceLock<Backing> },
+}
+
+/// The heap under a reserved image, and whether it is in system memory.
+pub(super) struct Backing {
+    heap: ID3D12Heap,
+    system: bool,
+}
+
+/// Where an image's memory is, with its size where the image was reserved.
+#[derive(Debug, PartialEq)]
+pub(super) enum Place {
+    Committed,
+    Unbacked(u64),
+    Card(u64),
+    System(u64),
 }
 
 /// `TUXBOX_LAZY_TEXTURES=0` creates every placed image committed, as before.
@@ -104,7 +119,103 @@ pub(super) fn reserve(
     }
     CREATED_BYTES.fetch_add(u64::from(tiles) * TILE, Ordering::Relaxed);
     report("reservation", CREATED.fetch_add(1, Ordering::Relaxed) + 1);
-    Some((native, Residency::Reserved { tiles, heap: OnceLock::new() }))
+    Some((native, Residency::Reserved { tiles, backing: OnceLock::new() }))
+}
+
+/// A heap of `bytes` for a reserved image, on the card or in system memory.
+fn heap(device: &ID3D12Device, bytes: u64, system: bool) -> Result<ID3D12Heap> {
+    let properties = if system {
+        // vkd3d-proton puts a system-pool heap on the card all the same when
+        // it has no CPU access, so this one asks for write-combined access.
+        D3D12_HEAP_PROPERTIES {
+            Type: D3D12_HEAP_TYPE_CUSTOM,
+            CPUPageProperty: D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE,
+            MemoryPoolPreference: D3D12_MEMORY_POOL_L0,
+            CreationNodeMask: 1,
+            VisibleNodeMask: 1,
+        }
+    } else {
+        D3D12_HEAP_PROPERTIES {
+            Type: D3D12_HEAP_TYPE_DEFAULT,
+            CreationNodeMask: 1,
+            VisibleNodeMask: 1,
+            ..Default::default()
+        }
+    };
+    let desc = D3D12_HEAP_DESC {
+        SizeInBytes: bytes,
+        Properties: properties,
+        Alignment: TILE,
+        Flags: D3D12_HEAP_FLAG_NONE,
+    };
+    let mut created: Option<ID3D12Heap> = None;
+    // SAFETY: D3D12 only borrows the description during creation.
+    unsafe { device.CreateHeap(&desc, &mut created)? };
+    created.ok_or_else(|| windows::Win32::Foundation::E_POINTER.into())
+}
+
+impl Residency {
+    pub(super) fn place(&self) -> Place {
+        match self {
+            Self::Committed => Place::Committed,
+            Self::Reserved { tiles, backing } => {
+                let bytes = u64::from(*tiles) * TILE;
+                match backing.get() {
+                    None => Place::Unbacked(bytes),
+                    Some(Backing { system: false, .. }) => Place::Card(bytes),
+                    Some(Backing { system: true, .. }) => Place::System(bytes),
+                }
+            }
+        }
+    }
+
+    /// Map a reserved image's tiles onto a new heap through `queue`, in system
+    /// memory if `room` has no space for it. Returns whether it mapped anything.
+    pub(super) fn map(
+        &self,
+        device: &ID3D12Device,
+        queue: &ID3D12CommandQueue,
+        native: &ID3D12Resource,
+        flags: D3D12_RESOURCE_FLAGS,
+        room: &mut budget::Room,
+    ) -> Result<bool> {
+        let Self::Reserved { tiles, backing } = self else {
+            return Ok(false);
+        };
+        if backing.get().is_some() {
+            return Ok(false);
+        }
+        let bytes = u64::from(*tiles) * TILE;
+        let mut system = room.spill(bytes, flags);
+        let created = match system.then(|| heap(device, bytes, true)) {
+            Some(Ok(created)) => created,
+            // A driver that refuses the system heap keeps the image on the card.
+            _ => {
+                system = false;
+                heap(device, bytes, false)?
+            }
+        };
+        let start = D3D12_TILED_RESOURCE_COORDINATE::default();
+        let size = D3D12_TILE_REGION_SIZE { NumTiles: *tiles, UseBox: false.into(), ..Default::default() };
+        let range = D3D12_TILE_RANGE_FLAG_NONE;
+        let offset = 0u32;
+        // SAFETY: one region and one range, each of `tiles` tiles, covering the
+        // whole image (packed mips included) from heap offset zero.
+        unsafe {
+            queue.UpdateTileMappings(
+                native, 1, Some(&start), Some(&size), &created, 1,
+                Some(&range), Some(&offset), Some(tiles), D3D12_TILE_MAPPING_FLAG_NONE,
+            );
+        }
+        // Only the thread holding the transfer lock maps, so this cannot race.
+        let _ = backing.set(Backing { heap: created, system });
+        if system {
+            budget::spilled(bytes);
+        }
+        BACKED_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        report("first use", BACKED.fetch_add(1, Ordering::Relaxed) + 1);
+        Ok(true)
+    }
 }
 
 impl Texture {
@@ -112,53 +223,13 @@ impl Texture {
     pub(super) fn hold(&self) -> Held {
         let heap = match &self.residency {
             Residency::Committed => None,
-            Residency::Reserved { heap, .. } => heap.get().cloned(),
+            Residency::Reserved { backing, .. } => backing.get().map(|backing| backing.heap.clone()),
         };
         Held { _image: self.native.clone(), _heap: heap }
     }
 
-    /// Map a reserved image's tiles onto a new heap through `queue`. Returns
-    /// whether it mapped anything, in which case work on other queues must wait
-    /// for `queue` before using the image.
-    pub(super) fn back(&self, device: &ID3D12Device, queue: &ID3D12CommandQueue) -> Result<bool> {
-        let Residency::Reserved { tiles, heap } = &self.residency else {
-            return Ok(false);
-        };
-        if heap.get().is_some() {
-            return Ok(false);
-        }
-        let desc = D3D12_HEAP_DESC {
-            SizeInBytes: u64::from(*tiles) * TILE,
-            Properties: D3D12_HEAP_PROPERTIES {
-                Type: D3D12_HEAP_TYPE_DEFAULT,
-                CreationNodeMask: 1,
-                VisibleNodeMask: 1,
-                ..Default::default()
-            },
-            Alignment: TILE,
-            Flags: D3D12_HEAP_FLAG_NONE,
-        };
-        let mut created: Option<ID3D12Heap> = None;
-        // SAFETY: D3D12 only borrows the description during creation.
-        unsafe { device.CreateHeap(&desc, &mut created)? };
-        let created = created.ok_or(windows::Win32::Foundation::E_POINTER)?;
-        let start = D3D12_TILED_RESOURCE_COORDINATE::default();
-        let size = D3D12_TILE_REGION_SIZE { NumTiles: *tiles, UseBox: false.into(), ..Default::default() };
-        let flags = D3D12_TILE_RANGE_FLAG_NONE;
-        let offset = 0u32;
-        // SAFETY: one region and one range, each of `tiles` tiles, covering the
-        // whole image (packed mips included) from heap offset zero.
-        unsafe {
-            queue.UpdateTileMappings(
-                &self.native, 1, Some(&start), Some(&size), &created, 1,
-                Some(&flags), Some(&offset), Some(tiles), D3D12_TILE_MAPPING_FLAG_NONE,
-            );
-        }
-        // Only the thread holding the transfer lock maps, so this cannot race.
-        let _ = heap.set(created);
-        BACKED_BYTES.fetch_add(desc.SizeInBytes, Ordering::Relaxed);
-        report("first use", BACKED.fetch_add(1, Ordering::Relaxed) + 1);
-        Ok(true)
+    fn unbacked(&self) -> bool {
+        matches!(self.residency.place(), Place::Unbacked(_))
     }
 }
 
@@ -171,9 +242,16 @@ impl super::upload::Transfer {
         }
         let mut mapped = Vec::new();
         mapped.try_reserve(textures.len()).map_err(|_| windows::Win32::Foundation::E_OUTOFMEMORY)?;
+        // The adapter is asked only when something needs memory.
+        let mut room = if textures.iter().any(|texture| texture.unbacked()) {
+            self.meter.get_or_insert_with(|| budget::Meter::new(device)).room()
+        } else {
+            budget::Room(None)
+        };
         // A failure still has to cover the mappings queued before it.
         let result = textures.iter().try_for_each(|texture| {
-            if texture.back(device, &self.queue)? {
+            let flags = texture.desc.Flags;
+            if texture.residency.map(device, &self.queue, &texture.native, flags, &mut room)? {
                 mapped.push(texture);
             }
             Ok(())

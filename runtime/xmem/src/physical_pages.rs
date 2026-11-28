@@ -103,6 +103,13 @@ pub(super) fn record_aperture_kind(base: usize, bytes: usize, is_cpu: bool) {
     pool.aperture_kinds.insert(base, (end, is_cpu));
 }
 
+/// The bytes of physical pages the title holds, for the provider's memory log.
+#[unsafe(export_name = "TuxBoxPhysicalPageBytes")]
+extern "system" fn physical_page_bytes() -> u64 {
+    let pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+    pool.pages.len() as u64 * PAGE as u64
+}
+
 /// 64 KiB guest page tokens draw on sixteen ordinary host pages each.
 #[unsafe(export_name = "XMemGetFreePageStatistics")]
 unsafe extern "system" fn free_page_statistics(output: *mut [u64; 7]) -> i32 {
