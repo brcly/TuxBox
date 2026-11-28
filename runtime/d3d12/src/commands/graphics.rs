@@ -46,6 +46,7 @@ pub(super) unsafe extern "system" fn pipeline(list: &List, guest: *mut c_void) {
             let (native, data) = crate::device::late_pipeline::current(host);
             state.stencil_slot = data.stencil_slot;
             state.bindings.null_usage = data.null_usage.clone();
+            state.bindings.trace_name = data.trace_name.clone();
             state.bindings.pipeline = Some((native, data).into());
             state.bindings.draw_trace = data.draw_trace.clone();
             unsafe { state.native().SetPipelineState(native) };

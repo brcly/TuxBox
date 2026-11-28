@@ -77,12 +77,14 @@ unsafe fn create_pipeline_inner(
         })
     };
     unsafe { ManuallyDrop::drop(&mut native_desc.pRootSignature) };
+    let mut state = compute::PipelineData::default();
+    state.trace_name = crate::diagnostics::gpu_trace::name(&label);
     unsafe {
         wrap_pageable(
             native,
             &compute::PIPELINE,
             this,
-            compute::PipelineData::default(),
+            state,
             out,
         )
     }

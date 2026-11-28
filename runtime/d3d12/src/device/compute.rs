@@ -27,6 +27,8 @@ pub(crate) struct PipelineData {
     pub(crate) reflected: Option<std::sync::Arc<ComputeTable>>,
     pub(crate) raster_table: Option<std::sync::Arc<ComputeTable>>,
     pub(crate) null_usage: Option<std::sync::Arc<crate::diagnostics::null_usage::Tag>>,
+    /// The pipeline's name in the GPU fault trace (see `diagnostics::gpu_trace`).
+    pub(crate) trace_name: Option<std::sync::Arc<str>>,
     pub(crate) compute_threads: Option<[u32; 3]>,
     /// The guest root with the literal samplers the program needs and the root
     /// leaves out; set around each dispatch (see `compute_table::sampler_root`).
@@ -409,6 +411,7 @@ unsafe fn create_pipeline_x_inner(
         reflected,
         compute_threads,
         sampler_root,
+        trace_name: crate::diagnostics::gpu_trace::name(&label),
         image_writes: tuxbox_dxbc::image_writes::table_image_writes(bytes).map(Into::into),
         group_base,
         ..Default::default()
@@ -583,7 +586,7 @@ unsafe fn null_compute(
         })
     });
     substituted("compute");
-    Some(unsafe { wrap_pageable(native, &PIPELINE, this, PipelineData { null_usage, compute_threads, late, ..Default::default() }, out) })
+    Some(unsafe { wrap_pageable(native, &PIPELINE, this, PipelineData { null_usage, compute_threads, late, trace_name: crate::diagnostics::gpu_trace::name("null CS"), ..Default::default() }, out) })
 }
 
 #[derive(Debug, PartialEq, Eq)]

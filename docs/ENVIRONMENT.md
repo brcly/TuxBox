@@ -96,6 +96,7 @@ All are off by default. Capture variables write the game's data to disk, so don'
 | `TUXBOX_TRACE_SHADERS` | Shader cache lookups |
 | `TUXBOX_TRACE_PRESENT` | Presented frames and writes to display resources |
 | `TUXBOX_TRACE_RASTER_DRAWS`, `TUXBOX_TRACE_RASTER_ROOTS`, `TUXBOX_TRACE_RASTER_INPUTS` | Draws, their roots and inputs |
+| `TUXBOX_TRACE_GPU_FAULT` | Draws and dispatches the GPU had not finished when the device was lost, by pipeline (`1`) |
 | `TUXBOX_TRACE_RAYTRACING` | Acceleration structures and ray pipelines |
 | `TUXBOX_TRACE_STENCIL` | Stencil export routing |
 | `TUXBOX_TRACE_HEAP_IMPORTS`, `TUXBOX_TRACE_BUFFER_BACKING` | How guest memory reaches the GPU |

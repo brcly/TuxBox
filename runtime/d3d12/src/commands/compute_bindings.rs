@@ -13,6 +13,7 @@ pub(super) struct Bindings {
     pub(super) pipeline: Option<Pipeline>,
     pub(super) draw_trace: Option<Arc<crate::diagnostics::RasterDraw>>,
     pub(super) null_usage: Option<Arc<crate::diagnostics::null_usage::Tag>>,
+    pub(super) trace_name: Option<Arc<str>>,
     heaps: Vec<Option<ID3D12DescriptorHeap>>,
     compute: Option<ID3D12RootSignature>,
     layout: Option<RootSource>,
@@ -127,6 +128,7 @@ impl Bindings {
             pipeline: initial.map(Pipeline::from),
             draw_trace: initial.and_then(|(_, state)| state.draw_trace.clone()),
             null_usage: initial.and_then(|(_, state)| state.null_usage.clone()),
+            trace_name: initial.and_then(|(_, state)| state.trace_name.clone()),
             ..Default::default()
         }
     }

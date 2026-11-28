@@ -551,6 +551,7 @@ pub(super) unsafe fn create(
         pPipelineStateSubobjectStream: output.cast(),
     };
     let label = stream_label(&original);
+    pipeline.trace_name = crate::diagnostics::gpu_trace::name(&label);
     // A large translated compute program can compile for longer than any load
     // will wait. It runs on a detached, queued compile with a deadline; past
     // that the title gets the stand-in, as on the direct compute path.
