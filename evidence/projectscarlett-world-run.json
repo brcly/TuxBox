@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "date_utc": "2026-11-28",
+  "title": "ProjectScarlett",
+  "package_version": "1.0.2.1",
+  "executable_sha256": "e95020b2fa4a721db3df59fdecf75621730ac559d8835252f6c3b658d5a08993",
+  "host": {
+    "gpu": "GeForce RTX 4070 Ti SUPER",
+    "gpu_memory_mib": 16376,
+    "driver": "620.73.04",
+    "backend": "GE-Proton11-14",
+    "memory_gib": 30,
+    "swap": "30 GiB zram, no disk swap"
+  },
+  "launch": {
+    "network": "disabled",
+    "memory_limit": "MemoryHigh=19G, MemoryMax=21G, MemorySwapMax=16G",
+    "environment": {
+      "TUXBOX_KEYBOARD_GAMEPAD": "0"
+    },
+    "shader_preparation": "completed beforehand on the same translator",
+    "source": "e380da14, built from a branch with the identical tree",
+    "provider_sha256": "a45b0e9a731872b7c194a630acfc778bc83ad631d437d3dc64e6b4f05354d9d8",
+    "log_sha256": "eac861f277691707aa869f247bc6aa16ab263fc71875435e6f08f06033df2d45"
+  },
+  "title_crash_report": {
+    "sha256": "b88af0c5d355a3f4c866b9f52cfd4669520c8061428d2698ad7026483b742e22",
+    "game_state": "Game Running",
+    "running_time": "0h:3m:42s",
+    "frame": 5040,
+    "streaming_script": "fbk_stry000_FBK_STRY000_INTRO",
+    "streaming_state": "Prestream"
+  },
+  "result": {
+    "reached": "The opening world scene was drawn on screen: a night skyline seen past a fence and an overhang",
+    "frame_seconds_in_world": [11, 17],
+    "exit_code": 5,
+    "seconds": 268.7,
+    "kernel_fault": "Xid 13, graphics SM warp exception, MMU fault",
+    "seconds_to_kernel_fault": 234,
+    "rejected_batches": 0,
+    "forced_label_wait_releases": 0,
+    "crash_cause_established": false
+  },
+  "provider_memory_log_near_end_mib": {
+    "card_used": 11733,
+    "card_budget": 12830,
+    "adapter_system_memory": 5559,
+    "title_physical_pages": 7131,
+    "process_commit": 17748,
+    "placed_textures_on_card": 6718,
+    "placed_textures_in_system_memory": 1677,
+    "unmapped_mips": 2282
+  },
+  "memory_sample_last": {
+    "gpu_gib_all_processes": 14.6,
+    "process_resident_gib": 12.6,
+    "process_swapped_gib": 11.8,
+    "host_available_gib": 6.3
+  },
+  "traced_run": {
+    "source": "the tracing change committed as 0a97a057, before it was committed",
+    "environment": {
+      "TUXBOX_TRACE_GPU_FAULT": "1"
+    },
+    "log_sha256": "c792c72d8e48e7fb38ff2681846d39270b5cbc90b76fbbcb6c26b761fb261781",
+    "kernel_fault": "Xid 13, graphics SM warp exception, MMU fault",
+    "recorded_commands": 139994,
+    "unfinished_draws": 9,
+    "unfinished_shaders": "all nine used VS 281b4977 and PS 96e8aaaa, the distant lights programs",
+    "faulting_access_established": false
+  },
+  "not_verified": [
+    "image correctness",
+    "input and audio",
+    "frame times beyond the log's present counts",
+    "missing detail from unmapped mips",
+    "any AMD card",
+    "play beyond this run"
+  ]
+}

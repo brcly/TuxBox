@@ -127,7 +127,11 @@ Frosty’s menu material at entry 2 illustrates the overlap with AnyPS5’s inst
 
 ## ProjectScarlett refusals
 
-On November 26, 2026, preparation compiled 36,653 of 41,064 recorded requests and refused 4,411. None failed in DXC or the validator. [Preparation record](../evidence/projectscarlett-shader-preparation.json)
+On November 28, 2026, preparation had versions of 18,858 of the 25,889 programs in the title's shader pack and found 165 unsupported; the other 6,866 had no recorded request. A program counts once, however many requests use it. By request, 42,124 compiled, 133 were cached and 4,042 of 46,299 were unsupported. None failed in DXC or the validator. [Preparation record](../evidence/projectscarlett-shader-preparation.json)
+
+The largest named groups of unsupported requests that day were a mesh request recorded without a root signature (1,567), literal samplers (454), a raw buffer access that needs the console descriptor stride (208), lane reads in non-uniform loops (60), untyped buffer forms (56), descriptor mapping (49) and ray traversal over console structures (40). Another 1,462 fall in no named group.
+
+The table below is from the November 26 preparation, which compiled 36,653 of 41,064 requests:
 
 | Refusal reason | Requests |
 | --- | --- |
@@ -138,7 +142,7 @@ On November 26, 2026, preparation compiled 36,653 of 41,064 recorded requests an
 | Image sample from an unordered-access table the root doesn't describe (`u7`) | 236 |
 | Lane operation with a non-constant lane | 203 |
 
-Translator changes since then have removed many of these. On November 28, preparation compiled 18,852 of the 25,889 programs in the title's shader pack and found 165 unsupported; the rest had no recorded request. By request, 42,108 compiled, 131 were cached and 4,042 were refused, in about 20 minutes. A program counts once, however many requests use it.
+Translator changes since then have removed many of these.
 
 The counts are per recorded request, so they overstate what a live run loses: a request recorded without its root signature can't be translated offline. Rank failures by the pipelines a run lost with the [pipeline failure record](PROJECTSCARLETT.md#finding-why-pipelines-fail).
 

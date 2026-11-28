@@ -1,15 +1,23 @@
 {
   "schema": 1,
-  "date_utc": "2026-11-26",
+  "date_utc": "2026-11-28",
+  "source": "3d930b73",
   "executable_sha256": "e95020b2fa4a721db3df59fdecf75621730ac559d8835252f6c3b658d5a08993",
-  "compiler_sha256": "b3f7a13a87f99e89d442d3da7fed13e9ff3e29a72a43853c27cec6bcc49d0151",
-  "log_sha256": "133a5e115058b6ab51c2abd11b7c1efe142b356c453ec161f89d1fe18f0ad403",
+  "compiler_sha256": "d7e0db00eff8316819bbc106df2f32a819362b7da21bf6f2a808cf5ec2648c82",
+  "log_sha256": "6b489818a504eca706c135426f3ae92e78ab23be2f824689ec668fad6f700135",
+  "programs": {
+    "in_shader_pack": 25889,
+    "compiled": 18858,
+    "unsupported": 165,
+    "without_a_recorded_request": 6866
+  },
   "requests": {
-    "total": 41064,
-    "compiled": 36653,
-    "unsupported": 4411,
+    "total": 46299,
+    "compiled": 42124,
+    "cached": 133,
+    "unsupported": 4042,
     "failed": 0
   },
-  "duration_seconds": 1396,
-  "dxil_reused": 24129
+  "duration_seconds": 104,
+  "dxil_reused": 41901
 }

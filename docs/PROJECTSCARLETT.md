@@ -281,11 +281,12 @@ python tuxbox.py run --prepare-only --backend proton --prefix PREFIX /path/to/sc
 
 On November 28, 2026, an offline run on a GeForce RTX 4070 Ti SUPER rendered the
 opening world scene for the first time, a night skyline seen past a fence and an
-overhang. Frames took 11 to 17 seconds. About five minutes after launch, with
+overhang. Frames took 11 to 17 seconds. About four minutes after launch, with
 shaders prepared, the kernel logged Xid 13 (a shader memory fault) and the game
-ended on its own breakpoint. In a traced run, every draw that had started and not
-finished used the distant lights shaders. Which access faults isn't known. The
-picture hasn't been compared with a console's.
+ended on its own breakpoint. In a second, traced run, every draw that had started
+and not finished used the distant lights shaders. Which access faults isn't
+known. The picture hasn't been compared with a console's.
+[Run record](../evidence/projectscarlett-world-run.json)
 
 - **Memory.** A run still needs much more than the console's. Near the world scene
   the process had committed about 17 GB, beside about 12 GB of video memory, on a
