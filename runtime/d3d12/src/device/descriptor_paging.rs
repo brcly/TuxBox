@@ -22,6 +22,7 @@ use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::Result;
 
 use super::title_memory::GuestMemory;
+mod history;
 mod index_map;
 mod strides;
 pub(crate) use index_map::index_map;
@@ -32,6 +33,9 @@ pub(crate) struct Registry {
     count: std::sync::atomic::AtomicUsize,
     next_version: AtomicU64,
     identity_map: Mutex<Option<ID3D12Resource>>,
+    // Views the API replaced in inline arenas (see `history`), made with the
+    // first such arena. `None` if its heap could not be created.
+    history: std::sync::OnceLock<Option<history::History>>,
 }
 impl Registry {
     pub(crate) fn find(&self, address: usize) -> Option<Arc<Arena>> {
@@ -468,6 +472,9 @@ impl Arena {
             && stride >= INLINE_BYTES
             && stride.is_multiple_of(INLINE_BYTES);
         let guest_stride = if inline { INLINE_BYTES } else { stride };
+        if inline {
+            registry.history.get_or_init(|| history::History::new(owner).ok());
+        }
         let bytes = guest_stride
             .checked_mul(desc.NumDescriptors as usize)
             .ok_or(E_OUTOFMEMORY)?;
@@ -600,7 +607,12 @@ impl Arena {
         }
         let source = self.registry.find(record.source)?;
         let versions = source.authored.lock().unwrap_or_else(|e| e.into_inner());
-        (versions.get(&record.source) == Some(&record.version)).then(|| source.cpu(record.source))
+        if versions.get(&record.source) == Some(&record.version) {
+            return Some(source.cpu(record.source));
+        }
+        drop(versions);
+        // A copy of a view the API has replaced since.
+        self.registry.history.get()?.as_ref()?.find(record.source, record.version)
     }
 
     fn copy_native_view(
@@ -830,6 +842,8 @@ impl Write {
         let address = handle.ptr;
         let arena = registry.find(address);
         if let Some(a) = &arena {
+            // A record the title copied may still name the view being replaced.
+            a.preserve(address, 1);
             *handle = a.cpu(address);
         }
         Self { arena, address, stride: std::cell::Cell::new(0) }

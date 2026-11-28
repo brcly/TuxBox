@@ -141,6 +141,10 @@ unsafe fn copy_host_range(device: &Device, count: u32, dst: D3D12_CPU_DESCRIPTOR
         return;
     }
     let from = registry.copy_source(src);
+    if let Some(arena) = &arena {
+        // A record the title copied may still name the views being replaced.
+        arena.preserve(dst.ptr, count);
+    }
     if kind == D3D12_DESCRIPTOR_HEAP_TYPE_RTV {
         let stride = unsafe { device.native.GetDescriptorHandleIncrementSize(kind) } as usize;
         device.state.placements.targets.copy(stride, std::iter::once((dst.ptr, count)), std::iter::once((src.ptr, count)));
