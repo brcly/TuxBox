@@ -40,10 +40,7 @@ impl Buffers {
             D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE if resource.is_none() => {
                 // SAFETY: the AS arm supplies an address instead of a resource argument.
                 let address = unsafe { desc.Anonymous.RaytracingAccelerationStructure.Location };
-                (
-                    Arc::downgrade(&self.find(address, Kind::Structure).ok()?),
-                    address,
-                )
+                (Arc::downgrade(&self.structure_pool(address).ok()?), address)
             }
             _ => return None,
         };
@@ -91,19 +88,21 @@ pub(crate) unsafe fn inline_scene_address(
     {
         return Err(E_INVALIDARG.into());
     }
-    let pool = unsafe { guest(owner) }
-        .state
-        .blas
-        .find(address, Kind::Structure)?;
+    let pool = unsafe { guest(owner) }.state.blas.structure_pool(address)?;
     resolve_backing(&pool, address)
 }
 
 fn resolve_backing(pool: &Buffer, address: u64) -> Result<(ID3D12Resource, u64)> {
+    let mut targets = lock(&pool.targets);
+    let Some(native) = &pool.native else {
+        // Guest memory holds a scene only once one was built there.
+        let backing = targets.get(&address).and_then(Clone::clone).ok_or(E_INVALIDARG)?;
+        return Ok((backing.clone(), unsafe { backing.GetGPUVirtualAddress() }));
+    };
     // A list may execute again. The native VA captured in a root descriptor
     // must remain stable, including if a later AS copy would need larger storage.
-    let mut targets = lock(&pool.targets);
     match targets.entry(address).or_insert(None) {
         Some(backing) => Ok((backing.clone(), unsafe { backing.GetGPUVirtualAddress() })),
-        None => Ok((pool.native.clone(), address)),
+        None => Ok((native.clone(), address)),
     }
 }

@@ -287,13 +287,14 @@ static void probe_ambiguous_as(ID3D12Device* guest, ID3D12CommandAllocator* allo
     auto ambiguous = valid;
     ambiguous.build.DestAccelerationStructureData = va;
     guest_batch(buildList.Get(), 1, &ambiguous);
-    if (buildList->Close() != E_NOTIMPL) throw std::runtime_error("ambiguous AS build was accepted");
+    // A build the provider refuses is left out and the rest of the list kept.
+    if (FAILED(buildList->Close())) throw std::runtime_error("ambiguous AS build failed the whole list");
     auto updateList = guest_list(guest, allocator);
     auto update = valid;
     update.build.Inputs.Flags |= D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
     update.build.SourceAccelerationStructureData = va;
     guest_batch(updateList.Get(), 1, &update);
-    if (updateList->Close() != E_NOTIMPL) throw std::runtime_error("ambiguous AS update source was accepted");
+    if (FAILED(updateList->Close())) throw std::runtime_error("ambiguous AS update source failed the whole list");
     using Copy = void(WINAPI*)(IUnknown*, UINT64, UINT64, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE);
     auto reject_copy = [&](UINT64 destination, UINT64 source) {
         auto list = guest_list(guest, allocator);
@@ -443,19 +444,20 @@ static void run(bool xbox, bool guest_build, bool guest_copy, bool deserialize, 
         auto bad_batch = batch;
         bad_batch[1].build.DestAccelerationStructureData |= 1;
         guest_batch(invalid.Get(), static_cast<UINT>(bad_batch.size()), bad_batch.data());
-        if (invalid->Close() != E_INVALIDARG) throw std::runtime_error("unaligned batch accepted");
+        // A refused build is left out and the rest of the list kept.
+        if (FAILED(invalid->Close())) throw std::runtime_error("unaligned batch entry failed the whole list");
         auto extended = guest_list(provider.Get(), guest_allocator.Get());
 #ifdef TUXBOX_SINGLE_BUILD_PROBE
         ComPtr<ID3D12GraphicsCommandList4> single;
         check(extended.As(&single), "Xbox negative List4 query");
         using Single = void(WINAPI*)(ID3D12GraphicsCommandList4*, const Build*, UINT, const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC*);
         method<Single>(single.Get(), 117)(single.Get(), &batch[1].build, 1, nullptr);
-        if (extended->Close() != E_INVALIDARG) throw std::runtime_error("null postbuild array accepted");
+        if (FAILED(extended->Close())) throw std::runtime_error("null postbuild array failed the whole list");
 #else
         bad_batch[1] = batch[1];
         bad_batch[1].reserved[0] = 1;
         guest_batch(extended.Get(), static_cast<UINT>(bad_batch.size()), bad_batch.data());
-        if (extended->Close() != E_NOTIMPL) throw std::runtime_error("unknown batch extension accepted");
+        if (FAILED(extended->Close())) throw std::runtime_error("unknown batch extension failed the whole list");
 #endif
     } else {
         ComPtr<ID3D12GraphicsCommandList4> list;
@@ -626,7 +628,7 @@ static void run(bool xbox, bool guest_build, bool guest_copy, bool deserialize, 
         auto outside = entry;
         outside.build.Inputs.InstanceDescs += 2 * sizeof(D3D12_RAYTRACING_INSTANCE_DESC);
         guest_batch(short_list.Get(), 1, &outside);
-        if (short_list->Close() != E_INVALIDARG) throw std::runtime_error("partially unmapped GPU instance array accepted");
+        if (FAILED(short_list->Close())) throw std::runtime_error("partially unmapped GPU instance array failed the whole list");
         write_upload(instance_buffer.Get(), gpu_instances.data(), sizeof(gpu_instances));
 #ifdef TUXBOX_PROMOTED_BLAS_PROBE
         check_blas_promotion(provider.Get(), guest_queue.Get(), guest_allocator.Get(), tiny.Get(), entry, gpu_records.Get(),

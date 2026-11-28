@@ -96,8 +96,14 @@ pub(super) fn earlier_page(address: u64, stride: u32, origin: u64) -> Option<u64
 }
 
 pub(crate) unsafe fn command_buffer_address(device: *mut c_void, address: u64, bytes: u64) -> windows::core::Result<(Option<ID3D12Resource>, u64)> {
+    unsafe { command_buffer_address_flags(device, address, bytes, D3D12_RESOURCE_FLAG_NONE) }
+}
+
+/// As `command_buffer_address`, for a command that needs `flags` on the buffer.
+pub(crate) unsafe fn command_buffer_address_flags(device: *mut c_void, address: u64, bytes: u64, flags: D3D12_RESOURCE_FLAGS)
+    -> windows::core::Result<(Option<ID3D12Resource>, u64)> {
     let device = unsafe { &*device.cast::<Device>() };
-    let Some(buffer) = buffer_at(device, address, bytes, 1, false, D3D12_RESOURCE_FLAG_NONE)? else { return Ok((None, address)) };
+    let Some(buffer) = buffer_at(device, address, bytes, 1, false, flags)? else { return Ok((None, address)) };
     let host = unsafe { buffer.native.GetGPUVirtualAddress() } + buffer.offset(address);
     Ok((Some(buffer.native.clone()), host))
 }

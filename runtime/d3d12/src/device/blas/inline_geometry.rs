@@ -86,6 +86,13 @@ impl Geometry {
         }
     }
 
+    /// Drop the entry for one structure of `pool` whose storage was released.
+    pub(super) fn forget(&mut self, pool: &Arc<Buffer>, native: u64) {
+        if self.entries.get(&native).is_some_and(|e| e.owner.ptr_eq(&Arc::downgrade(pool))) {
+            self.set(pool, native, None);
+        }
+    }
+
     pub(super) fn release(&mut self, pool: &Arc<Buffer>) {
         let owner = Arc::downgrade(pool);
         let mut dirty = false;

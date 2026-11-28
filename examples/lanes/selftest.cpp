@@ -7,6 +7,8 @@
 extern "C" {
 #include "../../runtime/xmem/xmem.h"
 }
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -18,6 +20,7 @@ extern "C" {
 #include "xbox_shader.h"
 #include "raster_shader.h"
 #include "lane_spill_shader.h"
+#include "ray_query_shader.h"
 #include "reclaim_shader.h"
 #include "wave_alloc_shader.h"
 #include <algorithm>
@@ -49,8 +52,9 @@ constexpr size_t slot_copy_memory = 62, slot_write32 = 71, slot_write64 = 72, sl
 constexpr size_t slot_compute_root = 33, device_create_compute = 62, device_create_stream = 86;
 constexpr size_t slot_bind_heaps = 32, slot_compute_table = 35, queue_wait = 17;
 constexpr size_t slot_graphics_root = 34, slot_graphics_table = 36, slot_targets = 50, slot_clear_target = 52;
-constexpr size_t slot_execute_indirect = 61, slot_root_constants = 39, slot_root_uav = 45;
-constexpr size_t queue_signal = 16, queue_execute_frame = 35, device_place = 44, device_create_list = 73;
+constexpr size_t slot_execute_indirect = 61, slot_root_constants = 39, slot_root_srv = 43,
+                 slot_root_uav = 45;
+constexpr size_t queue_signal = 16, queue_copy_mappings = 31, queue_execute_frame = 35, device_place = 44, device_create_list = 73;
 
 using CopyMemory_ = void (WINAPI*)(ID3D12GraphicsCommandList*, UINT64, UINT64, UINT64, UINT);
 using Write32 = void (WINAPI*)(ID3D12GraphicsCommandList*, UINT64, UINT, UINT, UINT);
@@ -2532,6 +2536,396 @@ void ray_tracing_builder(ID3D12Device* device) {
     if (!original || copied != original) throw std::runtime_error("the acceleration structure was not copied");
 }
 
+// A console title can build into memory it allocated itself, with no resource
+// naming the range. Here one allocation holds the vertices, the instance
+// record, the scratch, a bottom-level structure and a scene that uses it. Size
+// reports show that both builds and a copy of the bottom level ran.
+void ray_tracing_guest_memory(ID3D12Device* device) {
+    Builder builder(device);
+    const float triangle[] = {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f};
+    D3D12_RAYTRACING_GEOMETRY_DESC geometry{};
+    geometry.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+    geometry.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+    geometry.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+    geometry.Triangles.VertexCount = 3;
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS bottom{};
+    bottom.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+    bottom.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_COMPACTION;
+    bottom.NumDescs = 1;
+    bottom.pGeometryDescs = &geometry;
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS top{};
+    top.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    top.NumDescs = 1;
+    top.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO bottom_size{}, top_size{};
+    builder.entry<Builder::Prebuild>(7)(builder.object, &bottom, nullptr, &bottom_size);
+    builder.entry<Builder::Prebuild>(7)(builder.object, &top, nullptr, &top_size);
+    if (!bottom_size.ResultDataMaxSizeInBytes || !top_size.ResultDataMaxSizeInBytes)
+        throw std::runtime_error("no prebuild sizes; ray tracing is unavailable");
+
+    // Vertices and the instance record share the first 64 KiB, as small
+    // console buffers do; scratch and both structures follow.
+    auto round = [](UINT64 bytes, UINT64 unit) { return (bytes + unit - 1) / unit * unit; };
+    const UINT64 instance_offset = 256;
+    const UINT64 scratch_offset = 65536;
+    const UINT64 scratch_bytes = std::max(bottom_size.ScratchDataSizeInBytes, top_size.ScratchDataSizeInBytes);
+    const UINT64 bottom_offset = round(scratch_offset + scratch_bytes, 65536);
+    const UINT64 top_offset = round(bottom_offset + bottom_size.ResultDataMaxSizeInBytes,
+                                    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT);
+    const UINT64 total = round(top_offset + top_size.ResultDataMaxSizeInBytes, 65536);
+    auto* memory = static_cast<BYTE*>(VirtualAlloc(nullptr, total, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    if (!memory) throw std::runtime_error("allocate title memory");
+    struct Release {
+        void* memory;
+        ~Release() { VirtualFree(memory, 0, MEM_RELEASE); }
+    } release{memory};
+    const UINT64 base = reinterpret_cast<UINT64>(memory);
+    std::memcpy(memory, triangle, sizeof(triangle));
+    geometry.Triangles.VertexBuffer = {base, 3 * sizeof(float)};
+    D3D12_RAYTRACING_INSTANCE_DESC instance{};
+    instance.Transform[0][0] = instance.Transform[1][1] = instance.Transform[2][2] = 1.f;
+    instance.InstanceMask = 0xff;
+    instance.AccelerationStructure = base + bottom_offset;
+    std::memcpy(memory + instance_offset, &instance, sizeof(instance));
+    top.InstanceDescs = base + instance_offset;
+
+    auto gpu_buffer = [&](UINT64 bytes, D3D12_RESOURCE_STATES state) {
+        return buffer(device, D3D12_HEAP_TYPE_DEFAULT, bytes, state,
+                      D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    };
+    auto copy = gpu_buffer(bottom_size.ResultDataMaxSizeInBytes,
+                           D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+    auto reports = gpu_buffer(32, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    auto readback = buffer(device, D3D12_HEAP_TYPE_READBACK, 32, D3D12_RESOURCE_STATE_COPY_DEST);
+
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+    build.Inputs = bottom;
+    build.DestAccelerationStructureData = base + bottom_offset;
+    build.ScratchAccelerationStructureData = base + scratch_offset;
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC compacted{};
+    compacted.DestBuffer = reports->GetGPUVirtualAddress();
+    compacted.InfoType = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_COMPACTED_SIZE;
+    Memory label(65536);
+    Queue direct(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+    auto* list = direct.list.Get();
+    builder.entry<Builder::Build>(3)(builder.object, list, &build, 1, &compacted);
+    unordered_barrier(list);
+    builder.entry<Builder::CopyStructure>(5)(builder.object, list, copy->GetGPUVirtualAddress(),
+                                             base + bottom_offset,
+                                             D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE_CLONE);
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC scene{};
+    scene.Inputs = top;
+    scene.DestAccelerationStructureData = base + top_offset;
+    scene.ScratchAccelerationStructureData = base + scratch_offset;
+    builder.entry<Builder::Build>(3)(builder.object, list, &scene, 0, nullptr);
+    unordered_barrier(list);
+    // Current sizes of the guest structure, its copy and the scene; a build
+    // that never ran leaves its report empty.
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC current{};
+    current.DestBuffer = reports->GetGPUVirtualAddress() + 8;
+    current.InfoType = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_CURRENT_SIZE;
+    const D3D12_GPU_VIRTUAL_ADDRESS measured[] = {base + bottom_offset, copy->GetGPUVirtualAddress(),
+                                                  base + top_offset};
+    method<EmitSizes>(list, slot_emit_sizes)(list, &current, 3, measured);
+    unordered_barrier(list);
+    compute_fixture::transition(list, reports.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                D3D12_RESOURCE_STATE_COPY_SOURCE);
+    list->CopyBufferRegion(readback.Get(), 0, reports.Get(), 0, 32);
+    direct.write64(label.address(), 22);
+    direct.submit();
+    direct.finish("builds in title memory");
+    expect_value(label, 0, 22, "write after the builds in title memory");
+
+    D3D12_RANGE range{0, 32}, empty{};
+    UINT64* mapped{};
+    check(readback->Map(0, &range, reinterpret_cast<void**>(&mapped)), "map size reports");
+    const UINT64 packed = mapped[0], original = mapped[1], copied = mapped[2], placed = mapped[3];
+    readback->Unmap(0, &empty);
+    const auto sizes = " (compacted " + std::to_string(packed) + ", current " + std::to_string(original) +
+                       ", copy " + std::to_string(copied) + ", scene " + std::to_string(placed) + ")";
+    if (!packed || packed > bottom_size.ResultDataMaxSizeInBytes)
+        throw std::runtime_error("the build in title memory reported no compacted size" + sizes);
+    if (!original) throw std::runtime_error("the structure in title memory has no current size" + sizes);
+    if (copied != original) throw std::runtime_error("the structure in title memory was not copied" + sizes);
+    // RADV reports a scene's current size above its prebuild maximum.
+    if (!placed) throw std::runtime_error("the scene in title memory was not built" + sizes);
+}
+
+// The console's quantized positions: a 32-byte header just before the first
+// record gives the origin, the axis order and the scale, and each 8-byte
+// record packs three coordinates of 24, 24 and 16 bits.
+void packed_positions(BYTE* first, UINT order, const float (*positions)[3], size_t count,
+                      float scale, const float origin[3]) {
+    float header[8]{origin[0], origin[1], origin[2], 0.f, scale, scale, scale, 0.f};
+    std::memcpy(&header[3], &order, sizeof(order));
+    std::memcpy(first - sizeof(header), header, sizeof(header));
+    for (size_t i = 0; i < count; ++i) {
+        UINT q[3];
+        for (int axis = 0; axis < 3; ++axis) {
+            // Order 0 stores (z, y, x), anything above 1 stores (x, y, z).
+            const int from = order == 0 ? 2 - axis : axis;
+            q[axis] = static_cast<UINT>((positions[i][from] - origin[axis]) / scale + 0.5f);
+        }
+        const UINT words[2]{q[0] << 8 | (q[1] & 0xff), q[2] << 16 | (q[1] >> 8)};
+        std::memcpy(first + 8 * i, words, sizeof(words));
+    }
+}
+
+// The console's index format 53: a header, one record per meshlet naming its
+// list of vertex indices, one word per triangle naming a meshlet and three
+// entries of its list, then the lists. Each meshlet here lists three vertices.
+void meshlet_indices(BYTE* stream, const std::vector<std::array<UINT16, 3>>& meshlets,
+                     const std::vector<UINT>& triangle_meshlets) {
+    const UINT count = static_cast<UINT>(meshlets.size());
+    std::vector<UINT> words{0x80000000u | count, static_cast<UINT>(triangle_meshlets.size()), 0};
+    for (UINT meshlet = 0; meshlet < count; ++meshlet) words.insert(words.end(), {0u, 3 * meshlet, 0u, 0u});
+    for (UINT meshlet : triangle_meshlets) words.push_back(meshlet << 21 | 2u << 14 | 1u << 7 | 0u);
+    std::memcpy(stream, words.data(), words.size() * sizeof(UINT));
+    stream += words.size() * sizeof(UINT);
+    for (const auto& list : meshlets) {
+        std::memcpy(stream, list.data(), sizeof(list));
+        stream += sizeof(list);
+    }
+}
+
+// Title memory as a console title maps it: the same physical pages at one
+// address for its CPU and, through the queue, at another for the GPU. The
+// provider gives the GPU's address a copy of the pages as they were when it
+// was mapped, so bytes the CPU writes afterwards are not seen there.
+struct TwoViews {
+    static constexpr SIZE_T pages = 2, page = 65536;
+    UINT64 tokens[pages]{};
+    BYTE* base;  // where the CPU writes
+    BYTE* gpu;   // what the title names in commands
+    explicit TwoViews(ID3D12CommandQueue* queue) {
+        SIZE_T count = pages;
+        if (!XMemAllocatePhysicalPages(0x20400000, &count, tokens) || count != pages)
+            throw std::runtime_error("allocate physical pages");
+        base = static_cast<BYTE*>(XMemVirtualAlloc(nullptr, pages * page, 0x20402000, 0x23, 0x2404));
+        gpu = static_cast<BYTE*>(XMemVirtualAlloc(nullptr, pages * page, 0x20402000, 0x23, 0x2404));
+        if (!base || !gpu || XMemMapPhysicalPages(base, pages, tokens) != base)
+            throw std::runtime_error("map physical pages for the CPU");
+        struct Range {
+            UINT kind, source, count;
+        } range{0, 0, static_cast<UINT>(pages)};
+        struct Batch {
+            UINT64 destination;
+            UINT count;
+            const Range* ranges;
+        } batch{reinterpret_cast<UINT64>(gpu), 1, &range};
+        using CopyMappings = HRESULT (WINAPI*)(ID3D12CommandQueue*, UINT, const Batch*, UINT64, UINT, UINT);
+        check(method<CopyMappings>(queue, queue_copy_mappings)(queue, 1, &batch, reinterpret_cast<UINT64>(base),
+                                                               static_cast<UINT>(pages), 0),
+              "map physical pages for the GPU");
+    }
+    TwoViews(const TwoViews&) = delete;
+    TwoViews& operator=(const TwoViews&) = delete;
+    UINT64 address(size_t offset) const { return reinterpret_cast<UINT64>(gpu + offset); }
+};
+
+// A title streams bottom-level structures in the console's own form and asks
+// the builder to rehydrate them in place from the geometry they were made
+// from. Here two such structures sit 256 bytes apart in title memory, and are
+// rehydrated in separate submissions. Their geometry is in the console's
+// formats: meshlet-coded indices and quantized positions, with a transform on
+// one geometry, and the second structure's geometry is only written after its
+// call is recorded. The title names everything by the address it mapped for
+// the GPU, which was mapped before any of it was written. A scene of both is
+// traced, and each ray must report the instance, geometry and primitive the
+// console's structure would.
+void ray_tracing_rehydrate(ID3D12Device* device) {
+    Builder builder(device);
+    Queue direct(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+    TwoViews memory(direct.queue.Get());
+    constexpr size_t first_positions = 0x100, first_indices = 0x400, second_positions = 0x700,
+                     transform_at = 0x900, late_positions = 0xb00, late_indices = 0xc00,
+                     structure_at = 0x10100;
+    const float zero[3]{};
+    // Two triangles, listed by their meshlets in the opposite order.
+    const float first[6][3]{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {2, 0, 0}, {3, 0, 0}, {2, 1, 0}};
+    packed_positions(memory.base + first_positions, 2, first, 6, 0.25f, zero);
+    meshlet_indices(memory.base + first_indices, {{3, 4, 5}, {0, 1, 2}}, {1, 0});
+    // One triangle without indices, moved one unit away by its transform.
+    const float second[3][3]{{4, 0, 0}, {5, 0, 0}, {4, 1, 0}};
+    packed_positions(memory.base + second_positions, 0, second, 3, 0.25f, zero);
+    const float moved[12]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -1};
+    std::memcpy(memory.base + transform_at, moved, sizeof(moved));
+
+    D3D12_RAYTRACING_GEOMETRY_DESC geometry[3]{};
+    for (auto& item : geometry) {
+        item.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+        item.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        item.Triangles.VertexFormat = DXGI_FORMAT_R32G32_FLOAT;
+    }
+    geometry[0].Triangles.IndexFormat = static_cast<DXGI_FORMAT>(53);
+    geometry[0].Triangles.IndexCount = 6;
+    geometry[0].Triangles.IndexBuffer = memory.address(first_indices);
+    geometry[0].Triangles.VertexCount = 6;
+    geometry[0].Triangles.VertexBuffer = {memory.address(first_positions), 8};
+    geometry[1].Triangles.VertexCount = 3;
+    geometry[1].Triangles.VertexBuffer = {memory.address(second_positions), 8};
+    geometry[1].Triangles.Transform3x4 = memory.address(transform_at);
+    geometry[2].Triangles.IndexFormat = static_cast<DXGI_FORMAT>(53);
+    geometry[2].Triangles.IndexCount = 3;
+    geometry[2].Triangles.IndexBuffer = memory.address(late_indices);
+    geometry[2].Triangles.VertexCount = 3;
+    geometry[2].Triangles.VertexBuffer = {memory.address(late_positions), 8};
+
+    // Each structure begins with the console's header: flags, a count of
+    // 64-byte nodes, a checksum and an element count.
+    const UINT64 structures[2]{memory.address(structure_at), memory.address(structure_at + 256)};
+    const UINT header[2][4]{{0x81020006u, 3, 0, 3}, {0x81020006u, 1, 0, 1}};
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC rehydrate[2]{};
+    for (int i = 0; i < 2; ++i) {
+        std::memcpy(memory.base + structure_at + 256 * i, header[i], sizeof(header[i]));
+        rehydrate[i].Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+        rehydrate[i].Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE |
+                                    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_MINIMIZE_MEMORY;
+        rehydrate[i].DestAccelerationStructureData = rehydrate[i].SourceAccelerationStructureData = structures[i];
+    }
+    rehydrate[0].Inputs.NumDescs = 2;
+    rehydrate[0].Inputs.pGeometryDescs = &geometry[0];
+    rehydrate[1].Inputs.NumDescs = 1;
+    rehydrate[1].Inputs.pGeometryDescs = &geometry[2];
+
+    D3D12_RAYTRACING_INSTANCE_DESC instances[2]{};
+    for (int i = 0; i < 2; ++i) {
+        instances[i].Transform[0][0] = instances[i].Transform[1][1] = instances[i].Transform[2][2] = 1.f;
+        instances[i].InstanceMask = 0xff;
+        instances[i].AccelerationStructure = structures[i];
+    }
+    instances[0].InstanceID = 7;
+    instances[1].InstanceID = 9;
+    instances[1].Transform[1][3] = 10.f;
+    auto records = buffer(device, D3D12_HEAP_TYPE_UPLOAD, sizeof(instances), D3D12_RESOURCE_STATE_GENERIC_READ);
+    compute_fixture::upload(records.Get(), instances, sizeof(instances));
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS top{};
+    top.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    top.NumDescs = 2;
+    top.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    top.InstanceDescs = records->GetGPUVirtualAddress();
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO top_size{};
+    builder.entry<Builder::Prebuild>(7)(builder.object, &top, nullptr, &top_size);
+    if (!top_size.ResultDataMaxSizeInBytes) throw std::runtime_error("no prebuild sizes; ray tracing is unavailable");
+    auto gpu_buffer = [&](UINT64 bytes, D3D12_RESOURCE_STATES state) {
+        return buffer(device, D3D12_HEAP_TYPE_DEFAULT, bytes, state, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    };
+    auto scene = gpu_buffer(top_size.ResultDataMaxSizeInBytes, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+    auto scratch = gpu_buffer(top_size.ScratchDataSizeInBytes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    struct Probe {
+        float origin[3], minimum, direction[3], maximum;
+        UINT flags;
+    };
+    static_assert(sizeof(Probe) == 36);
+    struct Hit {
+        UINT instance, geometry, primitive;
+        float distance;
+    };
+    // Rays down the z axis from z = 5 and what each must report.
+    const struct {
+        float x, y;
+        Hit hit;
+    } cases[]{
+        {0.25f, 0.25f, {7, 0, 0, 5.f}},    // the first triangle its index stream lists
+        {2.25f, 0.25f, {7, 0, 1, 5.f}},    // the second, from the stream's first meshlet
+        {4.25f, 0.25f, {7, 1, 0, 6.f}},    // the second geometry, behind by its transform
+        {0.25f, 10.25f, {9, 0, 0, 7.f}},   // the neighbouring structure
+        {20.f, 20.f, {~0u, ~0u, ~0u, 0.f}},
+    };
+    constexpr UINT rays = static_cast<UINT>(std::size(cases));
+    Probe probes[rays]{};
+    for (UINT i = 0; i < rays; ++i) probes[i] = {{cases[i].x, cases[i].y, 5.f}, 0.f, {0.f, 0.f, -1.f}, 100.f, 0};
+    auto probe_buffer = buffer(device, D3D12_HEAP_TYPE_UPLOAD, sizeof(probes), D3D12_RESOURCE_STATE_GENERIC_READ);
+    compute_fixture::upload(probe_buffer.Get(), probes, sizeof(probes));
+    constexpr UINT64 result_bytes = rays * sizeof(Hit);
+    auto results = gpu_buffer(result_bytes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    auto readback = buffer(device, D3D12_HEAP_TYPE_READBACK, result_bytes, D3D12_RESOURCE_STATE_COPY_DEST);
+
+    D3D12_ROOT_PARAMETER params[3]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    params[2].Descriptor.ShaderRegister = 1;
+    D3D12_ROOT_SIGNATURE_DESC signature{3, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    ComPtr<ID3DBlob> serialized;
+    check(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, nullptr),
+          "serialize ray query root signature");
+    ComPtr<ID3D12RootSignature> root;
+    check(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                      IID_PPV_ARGS(&root)), "create ray query root signature");
+    D3D12_COMPUTE_PIPELINE_STATE_DESC shader{};
+    shader.pRootSignature = root.Get();
+    shader.CS = {ray_query_dxil, sizeof(ray_query_dxil)};
+    ComPtr<ID3D12PipelineState> pipeline;
+    check(method<CreateComputePipeline>(device, device_create_compute)(device, &shader, 0, nullptr,
+                                                                       IID_PPV_ARGS(&pipeline)),
+          "create ray query pipeline");
+
+    Memory label(65536);
+    auto* list = direct.list.Get();
+    using Rehydrate = HRESULT (WINAPI*)(void*, ID3D12GraphicsCommandList*, UINT,
+                                        const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC*, const UINT64*);
+    // The neighbours arrive in separate submissions, as streamed structures
+    // do: the second must not count as written over the first.
+    // The call's second array names each structure where the CPU sees it.
+    const UINT64 cpu_view[2]{reinterpret_cast<UINT64>(memory.base + structure_at),
+                             reinterpret_cast<UINT64>(memory.base + structure_at + 256)};
+    check(builder.entry<Rehydrate>(8)(builder.object, list, 1, &rehydrate[0], &cpu_view[0]),
+          "rehydrate the first structure");
+    direct.write64(label.address(), 22);
+    direct.submit();
+    direct.finish("the first rehydrated structure");
+    expect_value(label, 0, 22, "write after the first rehydrated structure");
+    direct.reopen();
+    check(builder.entry<Rehydrate>(8)(builder.object, list, 1, &rehydrate[1], &cpu_view[1]),
+          "rehydrate the second structure");
+    // The second structure's geometry arrives after its call is recorded.
+    const float late[3][3]{{0, 0, -2}, {1, 0, -2}, {0, 1, -2}};
+    const float late_origin[3]{0, 0, -2};
+    packed_positions(memory.base + late_positions, 2, late, 3, 0.25f, late_origin);
+    meshlet_indices(memory.base + late_indices, {{0, 1, 2}}, {0});
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+    build.Inputs = top;
+    build.DestAccelerationStructureData = scene->GetGPUVirtualAddress();
+    build.ScratchAccelerationStructureData = scratch->GetGPUVirtualAddress();
+    builder.entry<Builder::Build>(3)(builder.object, list, &build, 0, nullptr);
+    unordered_barrier(list);
+    method<SetRoot>(list, slot_compute_root)(list, root.Get());
+    list->SetPipelineState(pipeline.Get());
+    method<SetUav>(list, slot_root_srv)(list, 0, scene->GetGPUVirtualAddress());
+    method<SetUav>(list, slot_root_uav)(list, 1, results->GetGPUVirtualAddress());
+    method<SetUav>(list, slot_root_srv)(list, 2, probe_buffer->GetGPUVirtualAddress());
+    list->Dispatch(rays, 1, 1);
+    compute_fixture::transition(list, results.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                D3D12_RESOURCE_STATE_COPY_SOURCE);
+    list->CopyBufferRegion(readback.Get(), 0, results.Get(), 0, result_bytes);
+    direct.write64(label.address(), 23);
+    direct.submit();
+    direct.finish("rehydrated structures and their scene");
+    expect_value(label, 0, 23, "write after the rehydrated scene");
+
+    Hit found[rays]{};
+    D3D12_RANGE range{0, static_cast<SIZE_T>(result_bytes)}, empty{};
+    void* mapped{};
+    check(readback->Map(0, &range, &mapped), "map ray results");
+    std::memcpy(found, mapped, result_bytes);
+    readback->Unmap(0, &empty);
+    for (UINT i = 0; i < rays; ++i) {
+        const Hit& expected = cases[i].hit;
+        if (found[i].instance != expected.instance || found[i].geometry != expected.geometry ||
+            found[i].primitive != expected.primitive || std::fabs(found[i].distance - expected.distance) > 1e-3f) {
+            char message[200];
+            std::snprintf(message, sizeof(message),
+                          "ray %u: expected instance %d geometry %d primitive %d at %.3f, found %d %d %d at %.3f",
+                          i, int(expected.instance), int(expected.geometry), int(expected.primitive),
+                          expected.distance, int(found[i].instance), int(found[i].geometry),
+                          int(found[i].primitive), found[i].distance);
+            throw std::runtime_error(message);
+        }
+    }
+}
+
 // Slot 80 (dispatch_flagged) with USE_THREAD_DIMENSIONS (0x20) counts threads
 // rather than groups, converting via the bound PSO's [numthreads(8, 1, 1)].
 void thread_dimensions(ID3D12Device* device) {
@@ -3617,6 +4011,8 @@ constexpr Scenario scenarios[] = {
     {L"texture-readback", texture_readback},
     {L"texture-publication", texture_publication},
     {L"ray-tracing-builder", ray_tracing_builder},
+    {L"ray-tracing-guest-memory", ray_tracing_guest_memory},
+    {L"ray-tracing-rehydrate", ray_tracing_rehydrate},
     {L"thread-dimensions", thread_dimensions},
     {L"descriptor-reclaim", descriptor_reclaim},
     {L"unwritten-descriptors", unwritten_descriptors},
@@ -3695,7 +4091,7 @@ const wchar_t* const selftest_scenarios[] = {L"labels",            L"cross-queue
                                              L"indirect-dispatch", L"gpu-indirect-dispatch", L"gpu-indirect-order",
                                              L"mesh-signature", L"mesh-signature-none",
                                              L"dispatch-wait", L"texture-readback", L"texture-publication",
-                                             L"ray-tracing-builder",
+                                             L"ray-tracing-builder", L"ray-tracing-guest-memory", L"ray-tracing-rehydrate",
                                              L"thread-dimensions", L"descriptor-reclaim", L"unwritten-descriptors",
                                              L"xbox-shader", L"wave64-shader", L"mixed-lane",
                                              L"raster-tables", L"lane-spill-interp", L"wave-alloc", L"raster-samplers", L"compute-root",

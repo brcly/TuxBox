@@ -352,6 +352,8 @@ def build_target(tools, target, dxc, d3d12_reference=None):
                         "-Vn", "reclaim_dxil", str(src / "reclaim.hlsl")], cwd=objects, check=True)
         subprocess.run([dxc, "-T", "cs_6_0", "-E", "main", "-O3", "-Fh", "gpu_indirect_shader.h",
                         "-Vn", "gpu_indirect_dxil", str(src / "gpu_indirect.hlsl")], cwd=objects, check=True)
+        subprocess.run([dxc, "-T", "cs_6_5", "-E", "main", "-O3", "-Fh", "ray_query_shader.h",
+                        "-Vn", "ray_query_dxil", str(ROOT / "tools/reference/blas/query.hlsl")], cwd=objects, check=True)
         course = tools.compile(src / "course.cpp", objects, f"/I{objects}")
         screen = tools.compile(src / "screen.cpp", objects)
         panel = tools.compile(src / "panel.cpp", objects)

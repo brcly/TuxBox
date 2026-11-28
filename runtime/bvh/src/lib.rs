@@ -143,13 +143,27 @@ unsafe extern "system" fn tuxbox_bvh_copy(
     unsafe { record(list, dst, src, mode) };
 }
 
+/// The graphics provider's entry for rehydration, which records each entry
+/// as a host build of the geometry it names.
+type Rehydrate = unsafe extern "system" fn(Object, u32, *const Build, *const u64) -> HRESULT;
+
+fn provider_rehydrate() -> Option<Rehydrate> {
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    use windows::core::{s, w};
+    // The title's device and lists come from this module, so it is loaded.
+    let module = unsafe { GetModuleHandleW(w!("d3d12_xs.dll")) }.ok()?;
+    let entry = unsafe { GetProcAddress(module, s!("TuxBoxRehydrateAccelerationStructures")) }?;
+    // SAFETY: the provider exports this signature under that name.
+    Some(unsafe { core::mem::transmute::<unsafe extern "system" fn() -> isize, Rehydrate>(entry) })
+}
+
 #[unsafe(no_mangle)]
 unsafe extern "system" fn tuxbox_bvh_rehydrate2(
     _this: &Builder,
     list: Object,
     count: u32,
     builds: *const Build,
-    _addresses: *const u64,
+    addresses: *const u64,
 ) -> HRESULT {
     if count == 0 {
         return HRESULT(0);
@@ -157,8 +171,59 @@ unsafe extern "system" fn tuxbox_bvh_rehydrate2(
     if list.is_null() || builds.is_null() {
         return E_INVALIDARG;
     }
-    // Cooked Xbox node records cannot be submitted as native serialized DXR.
+    // Cooked Xbox node records cannot be submitted as native serialized DXR,
+    // but each entry names the geometry its structure was made from, so the
+    // provider builds a host structure from that at the same address.
+    static PROVIDER: std::sync::LazyLock<Option<Rehydrate>> = std::sync::LazyLock::new(provider_rehydrate);
+    if let Some(rehydrate) = *PROVIDER {
+        return unsafe { rehydrate(list, count, builds, addresses) };
+    }
+    // Without it nothing is built at the destinations, so scenes that
+    // reference them point at console node data; say which ones.
+    let builds = unsafe { core::slice::from_raw_parts(builds, count as usize) };
+    unsafe { report_rehydrate(builds, addresses) };
     E_NOTIMPL
+}
+
+/// Bounded log of refused rehydrations: calls, structures and the first
+/// destinations, with the inputs that describe the cooked records.
+unsafe fn report_rehydrate(builds: &[Build], addresses: *const u64) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static STRUCTURES: AtomicUsize = AtomicUsize::new(0);
+    let call = CALLS.fetch_add(1, Ordering::Relaxed) + 1;
+    let total = STRUCTURES.fetch_add(builds.len(), Ordering::Relaxed) + builds.len();
+    if call > 8 && !call.is_power_of_two() {
+        return;
+    }
+    log(&format!(
+        "TuxBox XboxBvhBuilder: refused rehydration #{call} of {} structures ({total} so far, addresses {}): cooked console nodes are not built",
+        builds.len(),
+        if addresses.is_null() { "none" } else { "given" },
+    ));
+    for (i, build) in builds.iter().take(4).enumerate() {
+        let inputs = &build.Inputs;
+        let extra = if addresses.is_null() { 0 } else { unsafe { addresses.add(i).read_unaligned() } };
+        log(&format!(
+            "TuxBox XboxBvhBuilder: rehydration #{call}[{i}] dest {:#x} source {:#x} scratch {:#x} address {extra:#x} type {} flags {:#x} count {} layout {}",
+            build.DestAccelerationStructureData,
+            build.SourceAccelerationStructureData,
+            build.ScratchAccelerationStructureData,
+            inputs.Type.0,
+            inputs.Flags.0,
+            inputs.NumDescs,
+            inputs.DescsLayout.0,
+        ));
+    }
+}
+
+fn log(message: &str) {
+    let mut bytes = Vec::with_capacity(message.len() + 2);
+    bytes.extend_from_slice(message.as_bytes());
+    bytes.extend_from_slice(b"\n\0");
+    unsafe {
+        windows::Win32::System::Diagnostics::Debug::OutputDebugStringA(windows::core::PCSTR(bytes.as_ptr()))
+    };
 }
 
 #[unsafe(no_mangle)]

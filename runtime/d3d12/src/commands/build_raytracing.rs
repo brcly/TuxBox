@@ -10,6 +10,11 @@ use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::System::{Diagnostics::Debug::ReadProcessMemory, Threading::GetCurrentProcess};
 use windows::core::{GUID, IUnknown, Result};
 
+pub(super) mod guest_addresses;
+mod meshlet_indices;
+mod packed_positions;
+pub(super) mod rehydrate;
+
 pub(crate) const LIST6: GUID = GUID::from_u128(0xc3827890_4024_474c_98cf_645b51dc4874);
 
 #[repr(C)]
@@ -22,7 +27,7 @@ const _: () = assert!(size_of::<Entry>() == 80);
 // Upload-backed instance records can be edited after Close and before each Execute.
 // Keep a separate upload so the guest always sees its original GPU addresses.
 pub(super) enum Instances {
-    Direct,
+    Direct(u64),
     Gpu(blas::instance_fixup::Instances),
     Upload {
         address: u64,
@@ -82,6 +87,12 @@ impl Instances {
             // Foreign addresses and GPU arrays of pointers have no safely resolved
             // input range. Native traversal remains valid until a BLAS moves.
             if unsafe { blas::has_relocations(owner) } {
+                if let Self::Direct(address) = self {
+                    static FIRST: std::sync::Once = std::sync::Once::new();
+                    crate::diagnostics::log_once(&FIRST, || format!(
+                        "TLAS instances at {address:#x} cannot be patched for relocated structures; rejecting the submission"
+                    ));
+                }
                 return Err(E_NOTIMPL.into());
             }
             return Ok(());
@@ -137,17 +148,21 @@ impl Instances {
     }
 }
 
+/// A recordable build: its host description, the TLAS instance records it
+/// reads, its result size, and the geometry descriptions it points to.
+type Translated = (
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC,
+    Option<ID3D12Resource>,
+    u64,
+    Vec<D3D12_RAYTRACING_GEOMETRY_DESC>,
+);
+
 fn translate(
     state: &mut Recording,
     owner: &IUnknown,
     host: &ID3D12GraphicsCommandList4,
     mut desc: D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC,
-) -> Result<(
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC,
-    Option<ID3D12Resource>,
-    u64,
-)> {
-    let relocated = unsafe { blas::resolve(owner, desc.DestAccelerationStructureData) }?;
+) -> Result<Translated> {
     let mut info = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO::default();
     let mut device = None::<ID3D12Device5>;
     unsafe { host.GetDevice(&mut device)? };
@@ -170,6 +185,9 @@ fn translate(
     {
         return Err(E_INVALIDARG.into());
     }
+    let relocated = unsafe {
+        blas::build_destination(owner, desc.DestAccelerationStructureData, info.ResultDataMaxSizeInBytes)
+    }?;
     if let Some(target) = relocated {
         if info.ResultDataMaxSizeInBytes > unsafe { target.GetDesc() }.Width {
             return Err(E_NOTIMPL.into());
@@ -177,6 +195,13 @@ fn translate(
         retain(state, &[&target])?;
         desc.DestAccelerationStructureData = unsafe { target.GetGPUVirtualAddress() };
     }
+    desc.ScratchAccelerationStructureData = guest_addresses::native(
+        state,
+        owner,
+        desc.ScratchAccelerationStructureData,
+        scratch,
+        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+    )?;
     if desc.SourceAccelerationStructureData != 0
         && let Some(source) = unsafe { blas::resolve(owner, desc.SourceAccelerationStructureData) }?
     {
@@ -184,7 +209,12 @@ fn translate(
         desc.SourceAccelerationStructureData = unsafe { source.GetGPUVirtualAddress() };
     }
     if desc.Inputs.Type != D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL {
-        return Ok((desc, None, info.ResultDataMaxSizeInBytes));
+        let geometry = guest_addresses::geometry(state, owner, &desc.Inputs)?;
+        if !geometry.is_empty() {
+            desc.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+            desc.Inputs.Anonymous.pGeometryDescs = geometry.as_ptr();
+        }
+        return Ok((desc, None, info.ResultDataMaxSizeInBytes, geometry));
     }
     if desc.Inputs.NumDescs == 0 {
         // Failure to allocate optional shader metadata cannot invalidate an
@@ -193,6 +223,7 @@ fn translate(
             desc,
             unsafe { blas::empty_instance_buffer(owner) }.ok(),
             info.ResultDataMaxSizeInBytes,
+            Vec::new(),
         ));
     }
     let address = unsafe { desc.Inputs.Anonymous.InstanceDescs };
@@ -229,28 +260,50 @@ fn translate(
                 {
                     return Err(E_INVALIDARG.into());
                 }
-                let patched = unsafe {
-                    blas::instance_fixup::Instances::record(owner, host, address, count as u32)?
-                };
-                unsafe {
-                    state.bindings.restore(host);
-                }
-                retain(state, &[&source, patched.output()])?;
-                desc.Inputs.Anonymous.InstanceDescs =
-                    unsafe { patched.output().GetGPUVirtualAddress() };
-                Instances::Gpu(patched)
+                retain(state, &[&source])?;
+                gpu_instances(state, owner, host, &mut desc, address, count)?
             }
             Err(e) if e.code() != E_INVALIDARG => return Err(e),
-            _ => Instances::Direct,
+            Ok(_) => Instances::Direct(address),
+            // Records in a title's own memory are read through an import.
+            Err(_) => {
+                let records = if indirect {
+                    None
+                } else {
+                    guest_addresses::imported(state, owner, address, bytes, D3D12_RESOURCE_FLAG_NONE)?
+                };
+                match records {
+                    Some(native) => gpu_instances(state, owner, host, &mut desc, native, count)?,
+                    None => Instances::Direct(address),
+                }
+            }
         },
     };
     let snapshot = match &instances {
-        Instances::Direct => None,
+        Instances::Direct(_) => None,
         Instances::Upload { patched, .. } => Some(patched.clone()),
         Instances::Gpu(records) => Some(records.output().clone()),
     };
     state.scene_commands.push(SceneCommand::Fixup(instances));
-    Ok((desc, snapshot, info.ResultDataMaxSizeInBytes))
+    Ok((desc, snapshot, info.ResultDataMaxSizeInBytes, Vec::new()))
+}
+
+/// Patch instance records at native `source` on the GPU before the build.
+fn gpu_instances(
+    state: &mut Recording,
+    owner: &IUnknown,
+    host: &ID3D12GraphicsCommandList4,
+    desc: &mut D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC,
+    source: u64,
+    count: usize,
+) -> Result<Instances> {
+    let patched = unsafe { blas::instance_fixup::Instances::record(owner, host, source, count as u32)? };
+    unsafe {
+        state.bindings.restore(host);
+    }
+    retain(state, &[patched.output()])?;
+    desc.Inputs.Anonymous.InstanceDescs = unsafe { patched.output().GetGPUVirtualAddress() };
+    Ok(Instances::Gpu(patched))
 }
 
 // The scene builder passes one ordinary 48-byte description to List4, along
@@ -342,7 +395,7 @@ unsafe fn record_builds(
         return;
     }
     // Build without any size report TuxBox cannot produce.
-    let outputs: Vec<_> = outputs
+    let mut outputs: Vec<_> = outputs
         .iter()
         .filter(|output| match super::raytracing::validate_size_output(output) {
             Ok(()) => true,
@@ -364,6 +417,10 @@ unsafe fn record_builds(
         state.error = E_INVALIDARG;
         return;
     };
+    if let Err(error) = guest_addresses::reports(&state, owner, &mut outputs, 1) {
+        super::Recording::skip("acceleration structure size reports: destination", error.code());
+        outputs.clear();
+    }
     for entry in entries {
         // One build can need a late-bound instance table, an update-source
         // check, and a destination publication, in that command order.
@@ -378,7 +435,8 @@ unsafe fn record_builds(
             None => translate(&mut state, owner, &host, entry.build)
                 .map_err(|e| ("translation", e.code())),
         };
-        let (build, instances, bytes) = match translated {
+        // The geometry descriptions must outlive the recorded build call.
+        let (build, instances, bytes, _geometry) = match translated {
             Ok(build) => build,
             Err((reason, code)) => {
                 let b = &entry.build;
@@ -424,7 +482,7 @@ unsafe fn record_builds(
                         guest: guest_va,
                         native: native_va,
                         bytes,
-                        build: blas::NativeBuild::record(owner, guest_va, native_va, &build.Inputs),
+                        build: blas::NativeBuild::record(owner, guest_va, native_va, &entry.build.Inputs),
                     }
                 };
             state.scene_commands.push(command);

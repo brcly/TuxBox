@@ -67,7 +67,7 @@ compiler. The runtime reports an actual compiler load failure separately
 from other pipeline errors. This is not a confirmed fix for the black-screen
 report in #39.
 
-The package's `XboxBvhBuilder.dll` runs its own console compute programs, and vkd3d-proton can't compile them: the log shows `Function 'xbox.…' is declared but has no definition` and failed compute pipelines. TuxBox's builder passes acceleration structure builds to the graphics driver instead. This removes those failures, but the title's ray tracing scenes still aren't built, so it doesn't make ray tracing work.
+The package's `XboxBvhBuilder.dll` runs its own console compute programs, and vkd3d-proton can't compile them: the log shows `Function 'xbox.…' is declared but has no definition` and failed compute pipelines. TuxBox's builder passes acceleration structure builds to the graphics driver instead. The structures the title streams in the console's own form and asks the builder to rehydrate are built the same way, from the geometry each call names. This removes those failures, but it has not been shown to make the title's ray tracing work.
 
 Copy the providers again after each rebuild. The launcher enables the constant-buffer layer only when the staged `d3d12_xs.dll` is byte-identical to `build/d3d12-smoke/d3d12_xs.dll`. With it, the launcher also adds `force_raw_va_cbv` to `VKD3D_CONFIG`, so constant buffers bound by address are read from the guest's 16-byte offsets.
 

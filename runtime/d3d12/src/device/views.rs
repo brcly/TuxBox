@@ -9,7 +9,7 @@ pub(super) use addressed::AddressSrv;
 use addressed::buffer_at;
 #[cfg(test)]
 use addressed::earlier_page;
-pub(crate) use addressed::command_buffer_address;
+pub(crate) use addressed::{command_buffer_address, command_buffer_address_flags};
 pub(crate) use addressed::LinearResource;
 pub(crate) use addressed::linear_resource;
 use addressed::rebase_view;

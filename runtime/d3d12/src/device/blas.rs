@@ -9,6 +9,7 @@ use windows::Win32::Graphics::Direct3D12::*;
 use windows::Win32::System::{Diagnostics::Debug::ReadProcessMemory, Threading::GetCurrentProcess};
 use windows::core::{IUnknown, Interface, Result};
 
+mod guest_memory;
 mod inline_geometry;
 pub(crate) mod instance_fixup;
 mod native_normals;
@@ -35,7 +36,8 @@ enum Kind {
 }
 
 struct Buffer {
-    native: ID3D12Resource,
+    // None for a pool in guest memory, whose structures all have private storage.
+    native: Option<ID3D12Resource>,
     start: u64,
     bytes: u64,
     kind: Kind,
@@ -44,7 +46,16 @@ struct Buffer {
     targets: Mutex<BTreeMap<u64, Option<ID3D12Resource>>>,
     // Upper bounds for the most recently submitted writes to each suballocation.
     sizes: Mutex<BTreeMap<u64, u64>>,
+    // Guest-memory pools only: the result space reserved at each structure.
+    extents: Mutex<BTreeMap<u64, u64>>,
     mappings: Arc<Mutex<Mappings>>,
+}
+
+impl Buffer {
+    /// The pool's own native buffer, which a guest-memory pool lacks.
+    fn storage(&self) -> Result<&ID3D12Resource> {
+        self.native.as_ref().ok_or_else(|| E_NOTIMPL.into())
+    }
 }
 
 #[derive(Default)]
@@ -126,6 +137,7 @@ pub(super) struct Buffers {
     empty_instances: Mutex<Option<ID3D12Resource>>,
     mappings: Arc<Mutex<Mappings>>,
     submission: Mutex<()>,
+    guest_pools: Mutex<BTreeMap<u64, Arc<Buffer>>>,
 }
 
 impl Buffers {
@@ -150,12 +162,13 @@ impl Buffers {
         };
         let start = unsafe { resource.GetGPUVirtualAddress() };
         let buffer = Arc::new(Buffer {
-            native: resource.clone(),
+            native: Some(resource.clone()),
             start,
             bytes: desc.Width,
             kind,
             targets: Mutex::default(),
             sizes: Mutex::default(),
+            extents: Mutex::default(),
             mappings: self.mappings.clone(),
         });
         lock(&self.index)
@@ -171,11 +184,17 @@ impl Buffers {
 
     fn find(&self, address: u64, kind: Kind) -> Result<Arc<Buffer>> {
         let index = lock(&self.index);
-        let mut candidates = index
-            .range((kind, 0)..=(kind, address))
-            .rev()
-            .flat_map(|(_, group)| group)
-            .filter(|buf| address - buf.start < buf.bytes);
+        let covering = || {
+            index
+                .range((kind, 0)..=(kind, address))
+                .rev()
+                .flat_map(|(_, group)| group)
+                .filter(|buf| address - buf.start < buf.bytes)
+        };
+        // A registered resource's native address can fall inside a guest
+        // allocation's CPU range; the resource names that address.
+        let registered = covering().any(|buf| buf.native.is_some());
+        let mut candidates = covering().filter(|buf| buf.native.is_some() == registered);
         let result = candidates.next().cloned().ok_or(E_INVALIDARG)?;
         if candidates.next().is_some() {
             return Err(E_NOTIMPL.into()); // ambiguous overlapping placed resources
@@ -194,6 +213,48 @@ unsafe fn guest(owner: &IUnknown) -> &Device {
 /// The owner must identify the controlling guest device.
 pub(crate) unsafe fn instance_buffer(owner: &IUnknown, bytes: u64) -> Result<ID3D12Resource> {
     rebuild::upload_buffer(&unsafe { guest(owner) }.native, bytes)
+}
+
+/// An upload buffer holding `data`: geometry the CPU decoded from a format
+/// the host cannot build from.
+///
+/// # Safety
+/// The owner must identify the controlling guest device.
+pub(crate) unsafe fn geometry_upload(owner: &IUnknown, data: &[u8]) -> Result<ID3D12Resource> {
+    let buffer = rebuild::upload_buffer(&unsafe { guest(owner) }.native, data.len() as u64)?;
+    let mut mapped = core::ptr::null_mut();
+    unsafe { buffer.Map(0, Some(&D3D12_RANGE::default()), Some(&mut mapped))? };
+    // SAFETY: the mapping spans at least `data.len()` bytes.
+    unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), mapped.cast::<u8>(), data.len()) };
+    unsafe { buffer.Unmap(0, None) };
+    Ok(buffer)
+}
+
+/// Write `data` at the start of an upload buffer at least that large.
+pub(crate) fn fill_upload(buffer: &ID3D12Resource, data: &[u8]) -> Result<()> {
+    if unsafe { buffer.GetDesc() }.Width < data.len() as u64 {
+        return Err(E_INVALIDARG.into());
+    }
+    let mut mapped = core::ptr::null_mut();
+    unsafe { buffer.Map(0, Some(&D3D12_RANGE::default()), Some(&mut mapped))? };
+    // SAFETY: the mapping spans at least `data.len()` bytes.
+    unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), mapped.cast::<u8>(), data.len()) };
+    unsafe { buffer.Unmap(0, None) };
+    Ok(())
+}
+
+/// Scratch space for a build whose title gives none.
+///
+/// # Safety
+/// The owner must identify the controlling guest device.
+pub(crate) unsafe fn scratch_buffer(owner: &IUnknown, bytes: u64) -> Result<ID3D12Resource> {
+    rebuild::buffer(
+        &unsafe { guest(owner) }.native,
+        bytes,
+        D3D12_HEAP_TYPE_DEFAULT,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+    )
 }
 
 /// Empty TLASes still need a valid root SRV; no ray can index an instance.
@@ -345,6 +406,58 @@ pub(crate) unsafe fn resolve(owner: &IUnknown, address: u64) -> Result<Option<ID
     Ok(result)
 }
 
+/// The storage a build at `address` with `bytes` of result space writes to,
+/// or None when the address is native. A title's own memory, which no
+/// resource names, gets private storage.
+///
+/// # Safety
+/// The owner must identify the list's controlling TuxBox device.
+pub(crate) unsafe fn build_destination(
+    owner: &IUnknown,
+    address: u64,
+    bytes: u64,
+) -> Result<Option<ID3D12Resource>> {
+    let device = unsafe { guest(owner) };
+    let registry = &device.state.blas;
+    let pool = match registry.structure_pool(address) {
+        Ok(pool) => pool,
+        Err(error) if error.code() == E_INVALIDARG => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if pool.native.is_some() {
+        return Ok(lock(&pool.targets).get(&address).and_then(Clone::clone));
+    }
+    guest_memory::target(&device.native, registry, &pool, address, bytes, bytes)
+        .map(|(storage, _)| Some(storage))
+}
+
+/// Storage for a structure the host builds in place of one the title holds
+/// at `address`, where the title's own structure spans `extent` bytes and
+/// the host's needs `capacity`. Unlike `build_destination` this never leaves
+/// the address to the host as it is: the host's structure can be larger than
+/// the title's, and the title packs neighbours right after it. Returns the
+/// storage and its address.
+///
+/// # Safety
+/// The owner must identify the list's controlling TuxBox device.
+pub(crate) unsafe fn replacement_destination(
+    owner: &IUnknown,
+    address: u64,
+    extent: u64,
+    capacity: u64,
+) -> Result<(ID3D12Resource, u64)> {
+    let device = unsafe { guest(owner) };
+    let registry = &device.state.blas;
+    let pool = registry.structure_pool_in(address, true)?;
+    // The extent comes from the title's bytes; it cannot pass its allocation.
+    let extent = extent.min(pool.start + pool.bytes - address);
+    if pool.native.is_some() {
+        target(&device.native, registry, &pool, address, extent, capacity)
+    } else {
+        guest_memory::target(&device.native, registry, &pool, address, extent, capacity)
+    }
+}
+
 struct Upload {
     buffer: Arc<Buffer>,
     offset: usize,
@@ -367,7 +480,8 @@ impl Upload {
         let mut ptr = core::ptr::null_mut();
         // SAFETY: restrict the mapping to the validated suballocation extent. Nested
         // Map/Unmap preserves existing guest uploads and their flush ranges.
-        unsafe { self.buffer.native.Map(0, Some(&range), Some(&mut ptr)) }?;
+        let native = self.buffer.storage()?;
+        unsafe { native.Map(0, Some(&range), Some(&mut ptr)) }?;
         let mut copied = 0;
         let copied_ok = unsafe {
             ReadProcessMemory(
@@ -378,7 +492,7 @@ impl Upload {
                 Some(&mut copied),
             )
         };
-        unsafe { self.buffer.native.Unmap(0, Some(&D3D12_RANGE::default())) };
+        unsafe { native.Unmap(0, Some(&D3D12_RANGE::default())) };
         copied_ok?;
         if copied != len {
             return Err(E_INVALIDARG.into());
@@ -541,7 +655,7 @@ pub(crate) unsafe fn deserialize(owner: &IUnknown, src: u64, dst: u64) -> Result
         buffer,
     };
     let buffer = registry
-        .find(dst, Kind::Structure)
+        .structure_pool(dst)
         .inspect_err(|e| failure(src, dst, "destination lookup", e.code(), None))?;
     let (snapshot, guest_bytes) = upload
         .snapshot(buffer.bytes - (dst - buffer.start))
@@ -561,7 +675,7 @@ pub(crate) unsafe fn deserialize(owner: &IUnknown, src: u64, dst: u64) -> Result
         .inspect_err(|e| failure(src, dst, "native build", e.code(), Some(&snapshot)))?;
     drop(builder);
     let (destination, destination_address) =
-        target(&device.native, &buffer, dst, guest_bytes, compacted)
+        target(&device.native, registry, &buffer, dst, guest_bytes, compacted)
             .inspect_err(|e| failure(src, dst, "placement", e.code(), Some(&snapshot)))?;
     static TRACE: LazyLock<bool> =
         LazyLock::new(|| std::env::var("TUXBOX_TRACE_RAYTRACING").as_deref() == Ok("1"));
@@ -595,11 +709,18 @@ pub(crate) unsafe fn deserialize(owner: &IUnknown, src: u64, dst: u64) -> Result
 
 fn target(
     device: &ID3D12Device,
-    buffer: &Buffer,
+    registry: &Buffers,
+    buffer: &Arc<Buffer>,
     address: u64,
     guest_bytes: u64,
     bytes: u64,
 ) -> Result<(ID3D12Resource, u64)> {
+    let Some(native) = &buffer.native else {
+        // A copy's result size is unknown while recording; reserve only the
+        // structure alignment so no live neighbour is released.
+        let extent = guest_bytes.max(u64::from(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT));
+        return guest_memory::target(device, registry, buffer, address, extent, bytes.max(guest_bytes));
+    };
     let mut targets = lock(&buffer.targets);
     if let Some(Some(existing)) = targets.get(&address) {
         let capacity = unsafe { existing.GetDesc() }.Width;
@@ -615,7 +736,7 @@ fn target(
     }
     if bytes <= guest_bytes {
         targets.insert(address, None);
-        return Ok((buffer.native.clone(), address));
+        return Ok((native.clone(), address));
     }
     // A committed buffer already consumes whole placement-alignment units.
     // Expose that space for later meshes reusing the same guest address.
@@ -636,15 +757,19 @@ pub(crate) unsafe fn copy_dest(
     source: &ID3D12Resource,
 ) -> Result<(ID3D12Resource, u64)> {
     let device = unsafe { guest(owner) };
-    let buffer = device.state.blas.find(dst, Kind::Structure)?;
+    let registry = &device.state.blas;
+    let buffer = registry.structure_pool(dst)?;
     // A previously relocated address must keep serving recorded consumers.
     // New copies receive backing as large as the source backing, so replayed
     // builds at the source can safely change its contents.
-    if let Some(backing) = lock(&buffer.targets).get(&dst).and_then(Clone::clone) {
+    if buffer.native.is_some()
+        && let Some(backing) = lock(&buffer.targets).get(&dst).and_then(Clone::clone)
+    {
         return Ok((backing.clone(), unsafe { backing.GetGPUVirtualAddress() }));
     }
     target(
         &device.native,
+        registry,
         &buffer,
         dst,
         0,
@@ -659,7 +784,7 @@ pub(crate) unsafe fn direct_source(owner: &IUnknown, address: u64) -> Result<ID3
         .state
         .blas
         .find(address, Kind::Structure)?;
-    Ok(pool.native.clone())
+    pool.storage().cloned()
 }
 
 /// Bound the copy against the submitted source. A registered native pool also
@@ -685,7 +810,7 @@ pub(crate) unsafe fn upload_range(
         .blas
         .find(address, Kind::Upload)?;
     let offset = address - buffer.start;
-    Ok((buffer.native.clone(), offset, buffer.bytes - offset))
+    Ok((buffer.storage()?.clone(), offset, buffer.bytes - offset))
 }
 
 /// The guest device owns the returned buffer. Report ambiguity separately from a
@@ -699,7 +824,7 @@ pub(crate) unsafe fn default_instances(
         .blas
         .find(address, Kind::Default)?;
     Ok((
-        buffer.native.clone(),
+        buffer.storage()?.clone(),
         buffer.bytes - (address - buffer.start),
     ))
 }
