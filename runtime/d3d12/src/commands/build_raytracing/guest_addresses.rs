@@ -8,6 +8,44 @@ use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_OUTOFMEMORY};
 use windows::Win32::Graphics::{Direct3D12::*, Dxgi::Common::*};
 use windows::core::{IUnknown, Interface, Result};
 
+/// The native scratch for a build of `bytes`. Scratch contents are undefined
+/// before and after a build, so when the host cannot reach the title's own
+/// scratch (memory the title only reserved, or memory whose import fails), a
+/// private device-local buffer the list keeps serves instead.
+pub(super) fn scratch(state: &Recording, owner: &IUnknown, address: u64, bytes: u64) -> Result<u64> {
+    let why = match imported(state, owner, address, bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) {
+        Ok(Some(native)) => return Ok(native),
+        Ok(None) if address == 0 || bytes == 0 || !title_memory(address) => return Ok(address),
+        Ok(None) => "not committed".to_string(),
+        Err(error) => format!("{:#010x}", error.code().0),
+    };
+    let private = unsafe { crate::device::blas::private_scratch(owner, bytes) }?;
+    retain(state, &[&private])?;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    let count = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if count <= 8 || count.is_power_of_two() {
+        crate::diagnostics::log(&format!(
+            "acceleration structure scratch at {address:#x}+{bytes:#x} is out of the host's reach ({why}, #{count}); building with private scratch"
+        ));
+    }
+    Ok(unsafe { private.GetGPUVirtualAddress() })
+}
+
+/// Whether `address` lies in memory the title allocated, committed or only
+/// reserved. A native address lies outside the CPU's allocations.
+fn title_memory(address: u64) -> bool {
+    use windows::Win32::System::Memory::{
+        MEM_COMMIT, MEM_MAPPED, MEM_PRIVATE, MEM_RESERVE, MEMORY_BASIC_INFORMATION, VirtualQuery,
+    };
+    let mut region = MEMORY_BASIC_INFORMATION::default();
+    if unsafe { VirtualQuery(Some(address as _), &mut region, size_of_val(&region)) } == 0 {
+        return false;
+    }
+    (region.State == MEM_COMMIT || region.State == MEM_RESERVE)
+        && (region.Type == MEM_PRIVATE || region.Type == MEM_MAPPED)
+}
+
 /// The native address of `bytes` at `address`. The list retains any import.
 pub(in crate::commands) fn native(
     state: &Recording,
