@@ -7,20 +7,32 @@ pub(in super::super) struct AddressSrv {
     pub(super) address: u64,
 }
 
+/// A live buffer already registered over `bytes` at `address`, without importing.
+/// The nearest entry can be a smaller resource placed inside an earlier import,
+/// so a few preceding entries are checked. Reusing the covering import matters:
+/// on hosts that mirror section-backed pages, a second import is a separate copy.
+fn covering_buffer(device: &Device, address: u64, bytes: u64, stride: u32, flags: D3D12_RESOURCE_FLAGS)
+    -> Option<std::sync::Arc<TextureAddress>> {
+    device.state.texture_addresses.preceding_entries(address as usize, 8).into_iter().find(|entry| {
+        if entry.is_stale() {
+            return false;
+        }
+        let host = unsafe { entry.native.GetDesc() };
+        host.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+            && host.Flags.0 & flags.0 == flags.0
+            && entry.offset(address).is_multiple_of(u64::from(stride))
+            && entry.offset(address).checked_add(bytes).is_some_and(|end| end <= host.Width)
+    })
+}
+
 pub(super) fn buffer_at(device: &Device, address: u64, bytes: u64, stride: u32, required: bool, flags: D3D12_RESOURCE_FLAGS)
     -> windows::core::Result<Option<std::sync::Arc<TextureAddress>>> {
     use windows::Win32::Foundation::E_INVALIDARG;
     use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
     use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
     crate::commands::page_mapping::GPU_APERTURE.wait(address,bytes)?;
-    if let Some(entry) = device.state.texture_addresses.preceding(address as usize).filter(|entry| !entry.is_stale()) {
-        let host = unsafe { entry.native.GetDesc() };
-        if host.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
-            && host.Flags.0 & flags.0 == flags.0
-            && entry.offset(address).is_multiple_of(u64::from(stride))
-            && entry.offset(address).checked_add(bytes).is_some_and(|end| end <= host.Width) {
-            return Ok(Some(entry));
-        }
+    if let Some(entry) = covering_buffer(device, address, bytes, stride, flags) {
+        return Ok(Some(entry));
     }
     // FirstElement is measured in whole records. If the guest's suballocation
     // starts between records relative to a 64 KiB page, place the buffer at
@@ -95,6 +107,71 @@ pub(super) fn earlier_page(address: u64, stride: u32, origin: u64) -> Option<u64
         .find(|&page| (address - page).is_multiple_of(stride))
 }
 
+/// How far past a root SRV or UAV address the host maps title memory. A root
+/// descriptor has no size, and a console shader reads title memory as far past
+/// it as the title placed data: ProjectScarlett reads per-instance records
+/// 80 KiB past one. A one-page import faults there, or reads whatever import
+/// the host placed next to it.
+const ROOT_VIEW_REACH: u64 = 4 << 20;
+
+/// The import, as start and length, that maps a root SRV or UAV at `address`:
+/// whole 64 KiB pages of the committed run holding it, which begins in the
+/// allocation at `allocation` and ends at `end`. The import starts at a
+/// reach-aligned page, so that later bindings nearby reuse it, when the memory
+/// from there to `address` is committed (`committed_end` gives the end of the
+/// committed run at an address, `None` if it is not committed), and otherwise
+/// at the address's own page. It spans twice the reach, clipped to the run.
+/// `None` when no whole committed page holds `address`.
+pub(super) fn root_view_window(address: u64, allocation: u64, end: u64, committed_end: impl FnOnce(u64) -> Option<u64>)
+    -> Option<(u64, u64)> {
+    let page = address & !0xffff;
+    let lowest = allocation.checked_next_multiple_of(0x10000)?;
+    let mut start = (address & !(ROOT_VIEW_REACH - 1)).max(lowest).min(page);
+    if start < page && committed_end(start).is_none_or(|run_end| run_end <= address) {
+        start = page;
+    }
+    let span = start
+        .checked_add(2 * ROOT_VIEW_REACH)
+        .map_or(end, |limit| limit.min(end))
+        .saturating_sub(start)
+        & !0xffff;
+    (start <= address && address < start + span).then_some((start, span))
+}
+
+/// The host address of a root SRV or UAV at title address `address`, with up
+/// to `ROOT_VIEW_REACH` bytes behind it mapped (see `root_view_window`) in a
+/// buffer with `flags`. An address outside committed memory is resolved as
+/// before.
+pub(crate) unsafe fn root_view_address(device_ptr: *mut c_void, address: u64, flags: D3D12_RESOURCE_FLAGS)
+    -> windows::core::Result<(Option<ID3D12Resource>, u64)> {
+    use windows::Win32::Foundation::E_INVALIDARG;
+    use windows::Win32::System::Memory::{MEMORY_BASIC_INFORMATION, MEM_COMMIT, VirtualQuery};
+    let device = unsafe { &*device_ptr.cast::<Device>() };
+    let committed = |at: u64| {
+        let mut region = MEMORY_BASIC_INFORMATION::default();
+        (unsafe { VirtualQuery(Some(at as _), &mut region, size_of_val(&region)) } != 0 && region.State == MEM_COMMIT)
+            .then_some(region)
+    };
+    // `BaseAddress` is the queried page; the committed run continues for `RegionSize`.
+    let run_end = |region: &MEMORY_BASIC_INFORMATION| (region.BaseAddress.addr() as u64).checked_add(region.RegionSize as u64);
+    let window = (address != 0).then(|| committed(address)).flatten().and_then(|region| {
+        root_view_window(address, region.AllocationBase.addr() as u64, run_end(&region)?, |start| {
+            committed(start).as_ref().and_then(run_end)
+        })
+    });
+    let Some((start, span)) = window else {
+        return unsafe { command_buffer_address_flags(device_ptr, address, 1, flags) };
+    };
+    let reach = ROOT_VIEW_REACH.min(start + span - address);
+    let entry = match covering_buffer(device, address, reach, 1, flags) {
+        Some(entry) => entry,
+        None => buffer_at(device, start, span, 1, false, flags)?.ok_or(E_INVALIDARG)?,
+    };
+    let host = unsafe { entry.native.GetGPUVirtualAddress() } + entry.offset(address);
+    device.state.command_imports.lock().unwrap_or_else(|e| e.into_inner()).keep(&entry);
+    Ok((Some(entry.native.clone()), host))
+}
+
 pub(crate) unsafe fn command_buffer_address(device: *mut c_void, address: u64, bytes: u64) -> windows::core::Result<(Option<ID3D12Resource>, u64)> {
     unsafe { command_buffer_address_flags(device, address, bytes, D3D12_RESOURCE_FLAG_NONE) }
 }
@@ -105,6 +182,7 @@ pub(crate) unsafe fn command_buffer_address_flags(device: *mut c_void, address: 
     let device = unsafe { &*device.cast::<Device>() };
     let Some(buffer) = buffer_at(device, address, bytes, 1, false, flags)? else { return Ok((None, address)) };
     let host = unsafe { buffer.native.GetGPUVirtualAddress() } + buffer.offset(address);
+    device.state.command_imports.lock().unwrap_or_else(|e| e.into_inner()).keep(&buffer);
     Ok((Some(buffer.native.clone()), host))
 }
 

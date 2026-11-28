@@ -4,7 +4,8 @@ use crate::device;
 use core::ffi::c_void;
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL};
 use windows::Win32::Graphics::Direct3D12::{
-    D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION, D3D12_RESOURCE_DIMENSION_BUFFER,
+    D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION, D3D12_RESOURCE_DIMENSION_BUFFER, D3D12_RESOURCE_FLAGS,
+    D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_NONE,
 };
 use windows::core::HRESULT;
 
@@ -103,6 +104,15 @@ pub(super) unsafe extern "system" fn constants<const COMPUTE: bool>(
 
 use super::compute_bindings::BufferView;
 
+/// The flags a root view's buffer needs: a root UAV is written through, as
+/// address UAVs are.
+fn root_view_flags(view: &BufferView) -> D3D12_RESOURCE_FLAGS {
+    match view {
+        BufferView::Uav(_) => D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+        BufferView::Cbv(_) | BufferView::Srv(_) => D3D12_RESOURCE_FLAG_NONE,
+    }
+}
+
 fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: fn(u64) -> BufferView) {
     let mut state = recording(list);
     if state.prepare_state() {
@@ -120,6 +130,16 @@ fn root_buffer<const COMPUTE: bool>(list: &List, index: u32, guest: u64, view: f
                     if let Err(e) = super::raytracing::retain(&mut state, &[&buffer]) { state.error = e.code(); return; }
                 }
                 va
+            }
+            None if !cbv && guest != 0 => {
+                // A root SRV or UAV has no size either: map title memory well
+                // past it (see `root_view_address`).
+                let flags = root_view_flags(&view(0));
+                let resolved = unsafe { device::root_view_address(parent(&list.parent), guest, flags) }.and_then(|(buffer, va)| {
+                    if let Some(buffer) = buffer { super::raytracing::retain(&state, &[&buffer])?; }
+                    Ok(va)
+                });
+                match resolved { Ok(va) => va, Err(e) => { state.error = e.code(); return; } }
             }
             None => {
                 let Some(va) = address(list, &mut state, guest, 1) else { return };

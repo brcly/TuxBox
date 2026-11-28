@@ -55,3 +55,10 @@ fn slot80_thread_dimensions_convert_to_rounded_groups_and_fail_closed() {
         Err(E_NOTIMPL)
     );
 }
+
+#[test]
+fn a_root_uav_is_mapped_in_a_buffer_that_allows_unordered_access() {
+    assert_eq!(root_view_flags(&BufferView::Uav(0x1000)), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    assert_eq!(root_view_flags(&BufferView::Srv(0x1000)), D3D12_RESOURCE_FLAG_NONE);
+    assert_eq!(root_view_flags(&BufferView::Cbv(0x1000)), D3D12_RESOURCE_FLAG_NONE);
+}

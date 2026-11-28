@@ -76,7 +76,7 @@ pub(crate) use heap::sync_shadow_imports;
 pub(crate) fn read_title_bytes(address: u64, out: &mut [u8]) -> bool {
     heap::backing::read_guest_bytes(address, out)
 }
-pub(crate) use views::{clear_buffer_alias, command_buffer_address, command_buffer_address_flags, is_constant_buffer, linear_resource, snapshot_cbv_mirrors, LinearResource};
+pub(crate) use views::{clear_buffer_alias, command_buffer_address, command_buffer_address_flags, is_constant_buffer, linear_resource, root_view_address, snapshot_cbv_mirrors, LinearResource};
 
 type Device = Proxy<ID3D12Device, dxgi::DxgiDevice>;
 pub(crate) enum Backing {
