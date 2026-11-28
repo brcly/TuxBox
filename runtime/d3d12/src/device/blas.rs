@@ -209,6 +209,21 @@ unsafe fn guest(owner: &IUnknown) -> &Device {
     unsafe { &*owner.as_raw().cast::<Device>() }
 }
 
+/// Device-local scratch of `bytes` for a build whose own scratch the host
+/// cannot reach.
+///
+/// # Safety
+/// The owner must identify the controlling guest device.
+pub(crate) unsafe fn private_scratch(owner: &IUnknown, bytes: u64) -> Result<ID3D12Resource> {
+    rebuild::buffer(
+        &unsafe { guest(owner) }.native,
+        bytes,
+        D3D12_HEAP_TYPE_DEFAULT,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+    )
+}
+
 /// # Safety
 /// The owner must identify the controlling guest device.
 pub(crate) unsafe fn instance_buffer(owner: &IUnknown, bytes: u64) -> Result<ID3D12Resource> {

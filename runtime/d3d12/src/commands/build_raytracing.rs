@@ -195,13 +195,8 @@ fn translate(
         retain(state, &[&target])?;
         desc.DestAccelerationStructureData = unsafe { target.GetGPUVirtualAddress() };
     }
-    desc.ScratchAccelerationStructureData = guest_addresses::native(
-        state,
-        owner,
-        desc.ScratchAccelerationStructureData,
-        scratch,
-        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
-    )?;
+    desc.ScratchAccelerationStructureData =
+        guest_addresses::scratch(state, owner, desc.ScratchAccelerationStructureData, scratch)?;
     if desc.SourceAccelerationStructureData != 0
         && let Some(source) = unsafe { blas::resolve(owner, desc.SourceAccelerationStructureData) }?
     {
