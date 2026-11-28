@@ -426,8 +426,8 @@ static void run(int argc, wchar_t **argv) {
     auto release = reinterpret_cast<Free>(GetProcAddress(xmem, "XMemFreePhysicalPages"));
     require(allocate && map && release, "xmem page exports");
     UINT64 tokens[2];
-    SIZE_T count = 2;
-    require(allocate(0x20400000, &count, tokens) && count == 2, "allocate pages");
+    SIZE_T pages = 2;
+    require(allocate(0x20400000, &pages, tokens) && pages == 2, "allocate pages");
     const UINT64 to_pages = (UINT64(1) << 22) | (UINT64(1) << 21);
     UINT64 late[1] = {0}, early[1] = {tokens[1]};
     Request p{to_pages, late, 0x4000, 16,
@@ -456,23 +456,24 @@ static void run(int argc, wchar_t **argv) {
     // A request the title cancels while it is already running completes
     // without counting as a failure. 64 MiB of stored deflate blocks with a
     // wrong Adler-32 keep the inflate busy long enough to cancel it.
-    const size_t size = 64 << 20, block = 65535;
+    const size_t total = 64 << 20, block = 65535;
     std::vector<unsigned char> z{0x78, 0x01};
-    for (size_t done = 0; done < size; done += block) {
-      size_t n = (std::min)(block, size - done);
-      z.push_back(done + n == size ? 1 : 0);
-      z.push_back(n & 0xff);
-      z.push_back(n >> 8);
-      z.push_back(~n & 0xff);
-      z.push_back((~n >> 8) & 0xff);
+    for (size_t done = 0; done < total; done += block) {
+      const UINT16 n = static_cast<UINT16>((std::min)(block, total - done));
+      z.push_back(done + n == total ? 1 : 0);
+      z.push_back(static_cast<unsigned char>(n));
+      z.push_back(static_cast<unsigned char>(n >> 8));
+      const UINT16 nlen = static_cast<UINT16>(~n);
+      z.push_back(static_cast<unsigned char>(nlen));
+      z.push_back(static_cast<unsigned char>(nlen >> 8));
       z.insert(z.end(), n, 0);
     }
     z.insert(z.end(), {0xde, 0xad, 0xbe, 0xef});
-    std::vector<unsigned char> sink(size);
+    std::vector<unsigned char> sink(total);
     Request c{(UINT64(1) << 22) | 1,
               sink.data(),
               0,
-              UINT32(size),
+              UINT32(total),
               reinterpret_cast<IUnknown *>(z.data()),
               0,
               UINT32(z.size()),
