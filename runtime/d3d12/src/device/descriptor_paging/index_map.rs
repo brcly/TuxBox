@@ -1,9 +1,12 @@
 //! Translate absolute guest indices for shaders using ResourceDescriptorHeap.
 //! Entries never move once published. Ordinary root tables can share contiguous
 //! entries or keep their own aliases when the guest table overlaps other ranges.
-use super::{Arena, FreeSpans, RetiredViews, Tables};
+use super::{Arena, FreeSpans, INLINE_BYTES, InlineDescriptor, RetiredViews, Tables};
 use crate::device::{Device, blas::upload_buffer};
-use std::{collections::BTreeMap, ops::Range};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Range,
+};
 use windows::Win32::Foundation::{E_OUTOFMEMORY, E_POINTER};
 use windows::Win32::Graphics::Direct3D12::*;
 use windows::core::{IUnknown, Interface, Result};
@@ -70,6 +73,26 @@ impl Drop for Upload {
 struct Resident {
     upload: Upload,
     slots: Vec<u32>,
+    // Indices with a slot, in the order they got one.
+    mapped: Vec<u32>,
+    // Indices whose slot holds a view resolved from a record the title copied
+    // there with ordinary stores, with that record. A bit per index says which.
+    copies: HashMap<u32, InlineDescriptor>,
+    copied: Vec<u64>,
+}
+
+/// What one refresh of an index map changed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Refresh {
+    /// Records naming another descriptor, whose view the slot now holds.
+    pub(crate) copies: usize,
+    /// Empty records, whose slot now holds a null view.
+    pub(crate) cleared: usize,
+    /// Records naming a descriptor the title has written again since it
+    /// copied the record. The slot keeps its view.
+    pub(crate) stale: usize,
+    /// Bytes that are not a record. The slot keeps its view.
+    pub(crate) unresolved: usize,
 }
 
 impl Arena {
@@ -79,12 +102,106 @@ impl Arena {
         }
         Ok(())
     }
+
+    /// Follow records the title copied into the heap with ordinary stores.
+    /// The map fills an index's slot when the API writes that index, but a
+    /// title can also copy a 32-byte record over it, from a CPU heap or from
+    /// another index. Root tables resolve such records each time they are
+    /// bound. Resolve a mapped index's record the same way before work that
+    /// can read it runs.
+    pub(crate) fn refresh_index_map(&self) -> Refresh {
+        let mut refresh = Refresh::default();
+        if !self.inline {
+            return refresh;
+        }
+        let mut retired = RetiredViews::default();
+        {
+            let mut tables = self.tables.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(resident) = tables.direct.resident.as_mut() else {
+                return refresh;
+            };
+            let base = self.base();
+            let changed: Vec<(u32, InlineDescriptor)> = resident
+                .mapped
+                .iter()
+                .filter_map(|&i| {
+                    let address = base + i as usize * INLINE_BYTES;
+                    let record = self.inline_record(address);
+                    let current = if resident.is_copy(i) {
+                        resident.copies.get(&i) == Some(&record)
+                    } else {
+                        // The slot holds the view the API wrote at this index.
+                        record.source == address
+                    };
+                    (!current).then_some((i, record))
+                })
+                .collect();
+            let start = self.native.as_ref().map(|native| native.visible_cpu_start);
+            for (i, record) in changed {
+                let to = start.map(|start| D3D12_CPU_DESCRIPTOR_HANDLE {
+                    ptr: start + resident.slots[i as usize] as usize * self.stride,
+                });
+                if let Some(from) = self.resolve_inline(record) {
+                    if let Some(to) = to {
+                        self.copy_native_view(to, from, &mut retired);
+                    }
+                    refresh.copies += 1;
+                } else if record == InlineDescriptor::default() {
+                    if let Some(to) = to {
+                        self.null_view(to, &mut retired);
+                    }
+                    refresh.cleared += 1;
+                } else if let Some(source) = self.registry.find(record.source)
+                    && (record.source - source.base()).is_multiple_of(source.guest_stride())
+                {
+                    // Only the descriptor written there now can be resolved.
+                    refresh.stale += 1;
+                } else {
+                    // A table spanning these bytes is refused rather than guessed.
+                    refresh.unresolved += 1;
+                }
+                resident.note_copy(i, record);
+            }
+        }
+        drop(retired);
+        refresh
+    }
 }
 
 impl Resident {
+    fn new(upload: Upload, count: u32) -> Result<Self> {
+        let mut slots = Vec::new();
+        slots.try_reserve_exact(count as usize).map_err(|_| E_OUTOFMEMORY)?;
+        slots.resize(count as usize, u32::MAX);
+        let mut copied = Vec::new();
+        copied.try_reserve_exact((count as usize).div_ceil(64)).map_err(|_| E_OUTOFMEMORY)?;
+        copied.resize((count as usize).div_ceil(64), 0);
+        Ok(Self { upload, slots, mapped: Vec::new(), copies: HashMap::new(), copied })
+    }
+
     fn assign(&mut self, i: usize, slot: u32) {
+        if self.slots[i] == u32::MAX {
+            self.mapped.push(i as u32);
+        }
         self.slots[i] = slot;
         self.upload.set(i, slot);
+    }
+
+    fn is_copy(&self, i: u32) -> bool {
+        self.copied[i as usize / 64] >> (i % 64) & 1 != 0
+    }
+
+    fn note_copy(&mut self, i: u32, record: InlineDescriptor) {
+        self.copied[i as usize / 64] |= 1 << (i % 64);
+        self.copies.insert(i, record);
+    }
+
+    // The API wrote index i: its slot holds that view again.
+    fn forget_copy(&mut self, i: u32) {
+        if self.is_copy(i) {
+            self.copied[i as usize / 64] &= !(1 << (i % 64));
+            self.copies.remove(&i);
+        }
     }
 
     fn missing_in(&self, range: Range<u32>) -> u32 {
@@ -104,6 +221,7 @@ impl Resident {
     ) {
         let mut run = None;
         for i in range.clone() {
+            self.forget_copy(i);
             let mut slot = self.slots[i as usize];
             if slot == u32::MAX {
                 slot = free.alloc(1).unwrap_or_else(|| {
@@ -223,15 +341,7 @@ pub(crate) unsafe fn index_map(owner: &IUnknown, arena: Option<&Arena>) -> Resul
             return Ok(resident.upload.native_resource().clone());
         }
 
-        let mut slots = Vec::new();
-        slots
-            .try_reserve_exact(arena.count as usize)
-            .map_err(|_| E_OUTOFMEMORY)?;
-        slots.resize(arena.count as usize, u32::MAX);
-        let resident = Resident {
-            upload: Upload::new(&device.native, arena.count)?,
-            slots,
-        };
+        let resident = Resident::new(Upload::new(&device.native, arena.count)?, arena.count)?;
         activate_with_resident(arena, &mut tables, resident, &mut retired)?;
         Ok(tables
             .direct
@@ -308,10 +418,6 @@ pub(super) fn activate_for_test(
     tables: &mut Tables,
     retired: &mut RetiredViews,
 ) -> Result<()> {
-    let slots = vec![u32::MAX; arena.count as usize];
-    let resident = Resident {
-        upload: Upload::Mock(vec![0; 1 + arena.count as usize]),
-        slots,
-    };
+    let resident = Resident::new(Upload::Mock(vec![0; 1 + arena.count as usize]), arena.count)?;
     activate_with_resident(arena, tables, resident, retired)
 }

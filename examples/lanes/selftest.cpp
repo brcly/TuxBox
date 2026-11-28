@@ -3655,6 +3655,84 @@ void bindless_compute_with(ID3D12Device* device, bool table) {
 void bindless_compute(ID3D12Device* device) { bindless_compute_with(device, false); }
 void bindless_table_compute(ID3D12Device* device) { bindless_compute_with(device, true); }
 
+// A title copies descriptors with ordinary stores: a heap's memory holds its
+// descriptors, so copying one from a CPU heap into the shader-visible heap
+// replaces the view at that index. ProjectScarlett fills slots of its 38 MiB
+// heap this way. The slot first holds a view of another window, written
+// through the API. The direct-indexed program must store through the copy.
+void bindless_raw_copy(ID3D12Device* device) {
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC signature{};
+    signature.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    signature.Desc_1_1 = {0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED};
+    ComPtr<ID3DBlob> serialized;
+    check(D3D12SerializeVersionedRootSignature(&signature, &serialized, nullptr), "serialize raw-copy root");
+    ComPtr<ID3D12RootSignature> root;
+    check(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                      IID_PPV_ARGS(&root)), "create raw-copy root");
+    D3D12_COMPUTE_PIPELINE_STATE_DESC shader{};
+    shader.pRootSignature = root.Get();
+    shader.CS = {bindless_compute_shader, sizeof(bindless_compute_shader)};
+    ComPtr<ID3D12PipelineState> pipeline;
+    check(method<CreateComputePipeline>(device, device_create_compute)(device, &shader, 0, nullptr,
+          IID_PPV_ARGS(&pipeline)), "create translated raw-copy pipeline");
+    constexpr UINT windows = 8, window_words = 64, decoy = 0xD0000000, stale = 5;
+    constexpr UINT64 bytes = windows * window_words * sizeof(UINT);
+    std::vector<UINT> words(windows * window_words);
+    for (UINT i = 0; i < windows; ++i) words[i * window_words] = decoy | i;
+    auto seed = buffer(device, D3D12_HEAP_TYPE_UPLOAD, bytes, D3D12_RESOURCE_STATE_GENERIC_READ);
+    compute_fixture::upload(seed.Get(), words.data(), size_t(bytes));
+    auto output = buffer(device, D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_STATE_COPY_DEST,
+                         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    auto readback = buffer(device, D3D12_HEAP_TYPE_READBACK, bytes, D3D12_RESOURCE_STATE_COPY_DEST);
+    D3D12_DESCRIPTOR_HEAP_DESC visible_desc{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 128,
+                                            D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC cpu_desc{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 8, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+    ComPtr<ID3D12DescriptorHeap> heap, staging;
+    check(device->CreateDescriptorHeap(&visible_desc, IID_PPV_ARGS(&heap)), "create raw-copy view heap");
+    check(device->CreateDescriptorHeap(&cpu_desc, IID_PPV_ARGS(&staging)), "create raw-copy CPU heap");
+    const UINT stride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    const SIZE_T slot = method<frame_abi::CpuHandle>(heap.Get(), 9)(heap.Get()) + SIZE_T(bindless_index) * stride;
+    const SIZE_T source = method<frame_abi::CpuHandle>(staging.Get(), 9)(staging.Get()) + 2 * SIZE_T(stride);
+    auto window_view = [&](UINT window, SIZE_T handle) {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC view{};
+        view.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        view.Format = DXGI_FORMAT_R32_TYPELESS;
+        view.Buffer.FirstElement = UINT64(window) * window_words;
+        view.Buffer.NumElements = window_words;
+        view.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        device->CreateUnorderedAccessView(output.Get(), nullptr, &view, {handle});
+    };
+    window_view(stale, slot);
+    window_view(0, source);
+    std::memcpy(reinterpret_cast<void*>(slot), reinterpret_cast<const void*>(source), stride);
+    Queue direct(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+    auto list = direct.list.Get();
+    list->CopyBufferRegion(output.Get(), 0, seed.Get(), 0, bytes);
+    compute_fixture::transition(list, output.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    ID3D12DescriptorHeap* heaps[]{heap.Get()};
+    method<BindHeaps>(list, slot_bind_heaps)(list, 1, heaps);
+    method<SetRoot>(list, slot_compute_root)(list, root.Get());
+    list->SetPipelineState(pipeline.Get());
+    list->Dispatch(1, 1, 1);
+    compute_fixture::transition(list, output.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                D3D12_RESOURCE_STATE_COPY_SOURCE);
+    list->CopyBufferRegion(readback.Get(), 0, output.Get(), 0, bytes);
+    direct.submit();
+    direct.finish("raw-copy dispatch");
+    D3D12_RANGE read{0, SIZE_T(bytes)}, empty{};
+    void* mapped = nullptr;
+    check(readback->Map(0, &read, &mapped), "map raw-copy readback");
+    std::vector<UINT> got(words.size());
+    std::memcpy(got.data(), mapped, size_t(bytes));
+    readback->Unmap(0, &empty);
+    words[0] = bindless_expected;
+    if (got == words) return;
+    if (got[stale * window_words] == bindless_expected)
+        throw std::runtime_error("the program stored through the view the slot held before the copy");
+    throw std::runtime_error("raw-copy output or guard words differ");
+}
+
 // A direct-indexed compute program samples the heap texture with a linear clamp
 // sampler it builds from literal words, which the zero-parameter root does not
 // declare, and stores the value through a heap UAV (`shader_fixture.py`). The
@@ -4106,6 +4184,7 @@ constexpr Scenario scenarios[] = {
     {L"bindless-texture-store", bindless_texture_store},
     {L"bindless-table-store", bindless_table_store},
     {L"bindless-table-compute", bindless_table_compute},
+    {L"bindless-raw-copy", bindless_raw_copy},
     {L"raster-heap-stride", raster_heap_stride},
     {L"large-dispatch", large_dispatch},
     {L"late-pipeline", late_pipeline},
@@ -4170,6 +4249,7 @@ const wchar_t* const selftest_scenarios[] = {L"labels",            L"cross-queue
                                              L"compute-root-recovery", L"compute-root-srv", L"bindless-compute",
                                              L"bindless-sampler", L"bindless-heap-read", L"bindless-texture-store",
                                              L"bindless-table-store", L"bindless-table-compute",
+                                             L"bindless-raw-copy",
                                              L"raster-heap-stride", L"large-dispatch",
                                              L"compute-heap-stride", L"late-pipeline",
                                              L"raster-sampler-waterfall"};

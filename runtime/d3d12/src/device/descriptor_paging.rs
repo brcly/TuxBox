@@ -630,6 +630,26 @@ impl Arena {
         };
     }
 
+    // An empty record has no resource. Use a valid null SRV rather than
+    // copying an uninitialized host descriptor.
+    fn null_view(&self, to: D3D12_CPU_DESCRIPTOR_HANDLE, retired: &mut RetiredViews) {
+        use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
+        let Some(native) = &self.native else {
+            return;
+        };
+        let null = D3D12_SHADER_RESOURCE_VIEW_DESC {
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
+            Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+            ..Default::default()
+        };
+        retired.imported.extend(native.imported.clear_deferred(self.stride, to.ptr, 1));
+        retired.placed.extend(native.placed.clear_deferred(self.stride, to.ptr, 1));
+        retired.scenes.extend(native.scenes.clear_deferred(self.stride, to.ptr, 1));
+        crate::diagnostics::display::texture_view(to.ptr, None, None);
+        unsafe { native.device.CreateShaderResourceView(None, Some(&null), to) };
+    }
+
     fn copy(&self, src: u32, dst: u32, count: u32, retired: &mut RetiredViews) {
         let Some(native) = &self.native else {
             return;

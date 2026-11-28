@@ -493,6 +493,21 @@ impl Recording {
                 None
             };
             let Some(table) = self.bindings.reflected_table::<true>() else { return };
+            // As for a draw, submission checks and refreshes the map of an
+            // arena the program indexes.
+            if table.index_map.is_some()
+                && let Some(arena) = &self.descriptor_arena
+                && !self
+                    .indexed_arenas
+                    .iter()
+                    .any(|used| Arc::ptr_eq(used, arena))
+            {
+                if self.indexed_arenas.try_reserve(1).is_err() {
+                    self.error = E_OUTOFMEMORY;
+                    return;
+                }
+                self.indexed_arenas.push(arena.clone());
+            }
             let scene = scenes.as_ref().and_then(|(vas, geometry)| {
                 self.bindings.scene_root().map(|root| (root, vas.as_slice(), *geometry))
             });

@@ -118,6 +118,8 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
     let trace_samples = std::cell::RefCell::new(Vec::new());
     // Shader-visible ranges the batch reads without being able to write them.
     let read_views = std::cell::RefCell::new(Vec::new());
+    // Arenas whose index map the batch's programs read.
+    let indexed = std::cell::RefCell::new(Vec::<std::sync::Arc<device::descriptor_paging::Arena>>::new());
     // The lists in this batch that write or wait on fence labels.
     let batch = std::cell::RefCell::new(String::new());
     // Their label writes, which hold the other queues' waits on those labels
@@ -147,6 +149,11 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
             // heap. Never submit an indexed access with an unpublished entry.
             for arena in &state.indexed_arenas {
                 arena.check_index_capacity().map_err(|e| e.code())?;
+                let mut indexed = indexed.borrow_mut();
+                if !indexed.iter().any(|known| std::sync::Arc::ptr_eq(known, arena)) {
+                    indexed.try_reserve(1).map_err(|_| E_OUTOFMEMORY)?;
+                    indexed.push(arena.clone());
+                }
             }
             for descriptor in &state.scalar_descriptors {
                 let owner = list.parent.as_ref().ok_or(E_INVALIDARG)?;
@@ -202,6 +209,11 @@ pub(super) unsafe fn execute_batch(queue: &Queue, count: u32, lists: *const *mut
             Ok(state.native().as_raw())
         },
         |host, (mut textures, mut writes, shader_views, scene_lists, splits, batch_writes, mut pending)| {
+            // Follow records the title copied into a mapped heap since the last
+            // batch, before the views its programs can read are gathered.
+            for arena in indexed.borrow().iter() {
+                arena.refresh_index_map();
+            }
             let holds = (!splits.is_empty())
                 .then(|| placement::held::Waits::new(splits.len().into()));
             let waits = holds.clone();
