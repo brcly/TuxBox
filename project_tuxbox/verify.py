@@ -34,7 +34,7 @@ SUITES = (*BASE_SUITES, "d3d12-mesh", *OPTIONAL_PROVIDERS)
 LANES_SCENARIOS = ("labels", "cross-queue", "cross-queue-late", "compute-frame", "skipped-command", "copy-memory", "shared-texture",
                    "indirect-dispatch", "gpu-indirect-dispatch", "gpu-indirect-order", "mesh-signature",
                    "dispatch-wait", "direct-copy-wait", "texture-readback", "texture-publication",
-                   "ray-tracing-builder", "ray-tracing-guest-memory", "ray-tracing-rehydrate",
+                   "ray-tracing-builder", "ray-tracing-guest-memory", "ray-tracing-rehydrate", "ray-tracing-refused-structure",
                    "thread-dimensions",
                    "descriptor-reclaim", "unwritten-descriptors")
 
@@ -1523,6 +1523,7 @@ GATE_LABELS = {
     "lanes-selftest-ray-tracing-builder": "Single, copied and batched builds through XboxBvhBuilder",
     "lanes-selftest-ray-tracing-guest-memory": "A structure, its copy and a scene built in title memory that no resource names",
     "lanes-selftest-ray-tracing-rehydrate": "Console structures rehydrated in title memory as host builds of their coded geometry, traced through a scene",
+    "lanes-selftest-ray-tracing-refused-structure": "A refused rebuild of a structure in title memory leaves its scene instance inactive, not the old or unbuilt structure",
     "lanes-selftest-thread-dimensions": "Slot 80 thread-dimension dispatch converted using the bound PSO group size",
     "lanes-selftest-descriptor-reclaim": "Shader-visible descriptor slot reclamation across completed, in-flight, ClearState, and OOM lists",
     "lanes-selftest-unwritten-descriptors": "A descriptor table with slots the title never wrote, in a heap whose title memory held leftover bytes",

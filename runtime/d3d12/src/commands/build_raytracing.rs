@@ -454,9 +454,11 @@ unsafe fn record_builds(
                     ),
                     code,
                 );
+                unsafe { blas::publish_refused(owner, b.DestAccelerationStructureData, reason) };
                 continue;
             }
         };
+        unsafe { blas::publish_built(owner, entry.build.DestAccelerationStructureData) };
         if entry.build.SourceAccelerationStructureData != 0 {
             state.scene_commands.push(SceneCommand::Source {
                 guest: entry.build.SourceAccelerationStructureData,

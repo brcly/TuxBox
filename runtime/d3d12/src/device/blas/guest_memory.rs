@@ -122,6 +122,7 @@ pub(super) fn target(
     address: u64,
     extent: u64,
     capacity: u64,
+    publish: bool,
 ) -> Result<(ID3D12Resource, u64)> {
     if pool.native.is_some() || extent == 0 || capacity == 0 {
         return Err(E_INVALIDARG.into());
@@ -163,14 +164,8 @@ pub(super) fn target(
             }
         };
         extents.insert(address, extent);
-        // Publish the storage now rather than at submission. A scene can be
-        // submitted before the list that builds one of its structures, when
-        // that list waits for a title fence; its instances must still reach
-        // this storage, never the guest address.
-        let native = unsafe { resource.GetGPUVirtualAddress() };
-        let mut mappings = lock(&pool.mappings);
-        if mappings.addresses.insert(address, native) != Some(native) {
-            mappings.dirty();
+        if publish {
+            publish_locked(pool, address, unsafe { resource.GetGPUVirtualAddress() });
         }
         resource
     };
@@ -183,6 +178,50 @@ pub(super) fn target(
     }
     let native = unsafe { resource.GetGPUVirtualAddress() };
     Ok((resource, native))
+}
+
+// Publish storage when a command writing it is recorded rather than when it
+// is submitted. A scene can be submitted before the list that builds one of
+// its structures, when that list waits for a title fence; its instances must
+// still reach this storage, never the guest address.
+fn publish_locked(pool: &Buffer, address: u64, native: u64) {
+    let mut mappings = lock(&pool.mappings);
+    if mappings.addresses.insert(address, native) != Some(native) {
+        mappings.dirty();
+    }
+}
+
+impl Buffers {
+    /// Publish the storage a recorded build chose for `address` in a title's
+    /// own memory. Other pools publish at submission.
+    pub(super) fn publish_built(&self, address: u64) {
+        let Ok(pool) = self.find(address, Kind::Structure) else { return };
+        if pool.native.is_some() {
+            return;
+        }
+        let storage = lock(&pool.targets).get(&address).and_then(Clone::clone);
+        if let Some(storage) = storage {
+            publish_locked(&pool, address, unsafe { storage.GetGPUVirtualAddress() });
+        }
+    }
+
+    /// A build at `address` in a title's own memory was refused. Publish no
+    /// structure there: instances that name it become inactive instead of
+    /// reaching storage nothing was built into, or the guest address.
+    pub(super) fn publish_refused(&self, address: u64, reason: &str) {
+        let Ok(pool) = self.structure_pool(address) else { return };
+        if pool.native.is_some() {
+            return;
+        }
+        publish_locked(&pool, address, 0);
+        static COUNT: AtomicU64 = AtomicU64::new(0);
+        let count = COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if count <= 16 || count.is_power_of_two() {
+            crate::diagnostics::log(&format!(
+                "acceleration structure build at {address:#x} refused ({reason}, #{count}); scene instances that use it are inactive"
+            ));
+        }
+    }
 }
 
 /// Total private storage held for guest-memory structures, logged as it grows.

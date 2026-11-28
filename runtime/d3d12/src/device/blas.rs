@@ -441,8 +441,27 @@ pub(crate) unsafe fn build_destination(
     if pool.native.is_some() {
         return Ok(lock(&pool.targets).get(&address).and_then(Clone::clone));
     }
-    guest_memory::target(&device.native, registry, &pool, address, bytes, bytes)
+    // Published once the build is recorded, so a refused build leaves none.
+    guest_memory::target(&device.native, registry, &pool, address, bytes, bytes, false)
         .map(|(storage, _)| Some(storage))
+}
+
+/// Publish the storage of a build recorded at `address`, if a title's own
+/// memory holds it.
+///
+/// # Safety
+/// The owner must identify the list's controlling TuxBox device.
+pub(crate) unsafe fn publish_built(owner: &IUnknown, address: u64) {
+    unsafe { guest(owner) }.state.blas.publish_built(address);
+}
+
+/// Make scene instances that name `address` inactive after the build there
+/// was refused, if a title's own memory holds it.
+///
+/// # Safety
+/// The owner must identify the list's controlling TuxBox device.
+pub(crate) unsafe fn publish_refused(owner: &IUnknown, address: u64, reason: &str) {
+    unsafe { guest(owner) }.state.blas.publish_refused(address, reason);
 }
 
 /// Storage for a structure the host builds in place of one the title holds
@@ -468,7 +487,7 @@ pub(crate) unsafe fn replacement_destination(
     if pool.native.is_some() {
         target(&device.native, registry, &pool, address, extent, capacity)
     } else {
-        guest_memory::target(&device.native, registry, &pool, address, extent, capacity)
+        guest_memory::target(&device.native, registry, &pool, address, extent, capacity, true)
     }
 }
 
@@ -733,7 +752,7 @@ fn target(
         // A copy's result size is unknown while recording; reserve only the
         // structure alignment so no live neighbour is released.
         let extent = guest_bytes.max(u64::from(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT));
-        return guest_memory::target(device, registry, buffer, address, extent, bytes.max(guest_bytes));
+        return guest_memory::target(device, registry, buffer, address, extent, bytes.max(guest_bytes), true);
     };
     let mut targets = lock(&buffer.targets);
     if let Some(Some(existing)) = targets.get(&address) {

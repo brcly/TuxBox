@@ -2996,6 +2996,179 @@ void ray_tracing_rehydrate(ID3D12Device* device) {
     }
 }
 
+// A title rebuilds a bottom-level structure in its own memory with geometry
+// the host cannot read (8-bit indices). The provider refuses that build, and
+// the scene's instance of it must then hit nothing: neither the triangle the
+// structure held before nor storage nothing was built into. A neighbouring
+// structure in the same memory stays hit.
+void ray_tracing_refused_structure(ID3D12Device* device) {
+    Builder builder(device);
+    // Two triangles at z = 0, the second ten units up; 16-bit indices.
+    const float vertices[2][3][3]{{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}, {{0, 10, 0}, {1, 10, 0}, {0, 11, 0}}};
+    const UINT16 indices[4]{0, 1, 2, 0};
+    constexpr UINT64 vertex_at = 0, index_at = 0x100, scratch_at = 65536;
+    D3D12_RAYTRACING_GEOMETRY_DESC geometry[2]{};
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS bottom[2]{};
+    for (int i = 0; i < 2; ++i) {
+        geometry[i].Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+        geometry[i].Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        geometry[i].Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+        geometry[i].Triangles.VertexCount = 3;
+        geometry[i].Triangles.IndexFormat = DXGI_FORMAT_R16_UINT;
+        geometry[i].Triangles.IndexCount = 3;
+        bottom[i].Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+        bottom[i].NumDescs = 1;
+        bottom[i].pGeometryDescs = &geometry[i];
+    }
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO bottom_size{};
+    builder.entry<Builder::Prebuild>(7)(builder.object, &bottom[0], nullptr, &bottom_size);
+    if (!bottom_size.ResultDataMaxSizeInBytes) throw std::runtime_error("no prebuild sizes; ray tracing is unavailable");
+    auto round = [](UINT64 bytes, UINT64 unit) { return (bytes + unit - 1) / unit * unit; };
+    const UINT64 slot = round(bottom_size.ResultDataMaxSizeInBytes, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BYTE_ALIGNMENT);
+    const UINT64 structure_at = round(scratch_at + bottom_size.ScratchDataSizeInBytes, 65536);
+    const UINT64 total = round(structure_at + 2 * slot, 65536);
+    auto* memory = static_cast<BYTE*>(VirtualAlloc(nullptr, total, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    if (!memory) throw std::runtime_error("allocate title memory");
+    struct Release {
+        void* memory;
+        ~Release() { VirtualFree(memory, 0, MEM_RELEASE); }
+    } release{memory};
+    const UINT64 base = reinterpret_cast<UINT64>(memory);
+    std::memcpy(memory + vertex_at, vertices, sizeof(vertices));
+    std::memcpy(memory + index_at, indices, sizeof(indices));
+    const UINT64 structures[2]{base + structure_at, base + structure_at + slot};
+    for (int i = 0; i < 2; ++i) {
+        geometry[i].Triangles.VertexBuffer = {base + vertex_at + i * sizeof(vertices[0]), 3 * sizeof(float)};
+        geometry[i].Triangles.IndexBuffer = base + index_at;
+    }
+
+    D3D12_RAYTRACING_INSTANCE_DESC instances[2]{};
+    for (int i = 0; i < 2; ++i) {
+        instances[i].Transform[0][0] = instances[i].Transform[1][1] = instances[i].Transform[2][2] = 1.f;
+        instances[i].InstanceMask = 0xff;
+        instances[i].InstanceID = 7 + 2 * i;
+        instances[i].AccelerationStructure = structures[i];
+    }
+    auto records = buffer(device, D3D12_HEAP_TYPE_UPLOAD, sizeof(instances), D3D12_RESOURCE_STATE_GENERIC_READ);
+    compute_fixture::upload(records.Get(), instances, sizeof(instances));
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS top{};
+    top.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    top.NumDescs = 2;
+    top.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    top.InstanceDescs = records->GetGPUVirtualAddress();
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO top_size{};
+    builder.entry<Builder::Prebuild>(7)(builder.object, &top, nullptr, &top_size);
+    auto gpu_buffer = [&](UINT64 bytes, D3D12_RESOURCE_STATES state) {
+        return buffer(device, D3D12_HEAP_TYPE_DEFAULT, bytes, state, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    };
+    auto scene = gpu_buffer(top_size.ResultDataMaxSizeInBytes, D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+    auto scene_scratch = gpu_buffer(top_size.ScratchDataSizeInBytes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    struct Probe {
+        float origin[3], minimum, direction[3], maximum;
+        UINT flags;
+    };
+    struct Hit {
+        UINT instance, geometry, primitive;
+        float distance;
+    };
+    // One ray down the z axis onto each triangle.
+    const Probe probes[2]{{{0.25f, 0.25f, 5.f}, 0.f, {0.f, 0.f, -1.f}, 100.f, 0},
+                          {{0.25f, 10.25f, 5.f}, 0.f, {0.f, 0.f, -1.f}, 100.f, 0}};
+    auto probe_buffer = buffer(device, D3D12_HEAP_TYPE_UPLOAD, sizeof(probes), D3D12_RESOURCE_STATE_GENERIC_READ);
+    compute_fixture::upload(probe_buffer.Get(), probes, sizeof(probes));
+    constexpr UINT64 result_bytes = 2 * sizeof(Hit);
+    auto results = gpu_buffer(result_bytes, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    auto readback = buffer(device, D3D12_HEAP_TYPE_READBACK, 2 * result_bytes, D3D12_RESOURCE_STATE_COPY_DEST);
+
+    D3D12_ROOT_PARAMETER params[3]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    params[2].Descriptor.ShaderRegister = 1;
+    D3D12_ROOT_SIGNATURE_DESC signature{3, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    ComPtr<ID3DBlob> serialized;
+    check(D3D12SerializeRootSignature(&signature, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, nullptr),
+          "serialize ray query root signature");
+    ComPtr<ID3D12RootSignature> root;
+    check(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
+                                      IID_PPV_ARGS(&root)), "create ray query root signature");
+    D3D12_COMPUTE_PIPELINE_STATE_DESC shader{};
+    shader.pRootSignature = root.Get();
+    shader.CS = {ray_query_dxil, sizeof(ray_query_dxil)};
+    ComPtr<ID3D12PipelineState> pipeline;
+    check(method<CreateComputePipeline>(device, device_create_compute)(device, &shader, 0, nullptr,
+                                                                       IID_PPV_ARGS(&pipeline)),
+          "create ray query pipeline");
+
+    Memory label(65536);
+    Queue direct(device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+    auto* list = direct.list.Get();
+    // Build the given bottom levels, then the scene, then trace both rays.
+    auto pass = [&](UINT count, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS* inputs,
+                    const UINT64* destinations, UINT64 readback_at) {
+        for (UINT i = 0; i < count; ++i) {
+            D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+            build.Inputs = inputs[i];
+            build.DestAccelerationStructureData = destinations[i];
+            build.ScratchAccelerationStructureData = base + scratch_at;
+            builder.entry<Builder::Build>(3)(builder.object, list, &build, 0, nullptr);
+            unordered_barrier(list);
+        }
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC build{};
+        build.Inputs = top;
+        build.DestAccelerationStructureData = scene->GetGPUVirtualAddress();
+        build.ScratchAccelerationStructureData = scene_scratch->GetGPUVirtualAddress();
+        builder.entry<Builder::Build>(3)(builder.object, list, &build, 0, nullptr);
+        unordered_barrier(list);
+        method<SetRoot>(list, slot_compute_root)(list, root.Get());
+        list->SetPipelineState(pipeline.Get());
+        method<SetUav>(list, slot_root_srv)(list, 0, scene->GetGPUVirtualAddress());
+        method<SetUav>(list, slot_root_uav)(list, 1, results->GetGPUVirtualAddress());
+        method<SetUav>(list, slot_root_srv)(list, 2, probe_buffer->GetGPUVirtualAddress());
+        list->Dispatch(2, 1, 1);
+        compute_fixture::transition(list, results.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                    D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->CopyBufferRegion(readback.Get(), readback_at, results.Get(), 0, result_bytes);
+        compute_fixture::transition(list, results.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    };
+    pass(2, bottom, structures, 0);
+    direct.write64(label.address(), 24);
+    direct.submit();
+    direct.finish("two structures in title memory and their scene");
+    expect_value(label, 0, 24, "write after the first scene");
+    direct.reopen();
+    // The rebuild of the first structure names 8-bit indices.
+    auto refused = bottom[0];
+    D3D12_RAYTRACING_GEOMETRY_DESC unreadable = geometry[0];
+    unreadable.Triangles.IndexFormat = DXGI_FORMAT_R8_UINT;
+    refused.pGeometryDescs = &unreadable;
+    pass(1, &refused, structures, result_bytes);
+    direct.write64(label.address(), 25);
+    direct.submit();
+    direct.finish("a refused rebuild and the scene after it");
+    expect_value(label, 0, 25, "write after the second scene");
+
+    Hit found[4]{};
+    D3D12_RANGE range{0, static_cast<SIZE_T>(2 * result_bytes)}, empty{};
+    void* mapped{};
+    check(readback->Map(0, &range, &mapped), "map ray results");
+    std::memcpy(found, mapped, sizeof(found));
+    readback->Unmap(0, &empty);
+    const UINT expected[4]{7, 9, ~0u, 9};
+    const char* what[4]{"the first structure", "the second structure", "the refused rebuild",
+                        "the second structure after the refusal"};
+    for (int i = 0; i < 4; ++i) {
+        if (found[i].instance != expected[i]) {
+            char message[160];
+            std::snprintf(message, sizeof(message), "ray onto %s: expected instance %d, found %d", what[i],
+                          int(expected[i]), int(found[i].instance));
+            throw std::runtime_error(message);
+        }
+    }
+}
+
 // Slot 80 (dispatch_flagged) with USE_THREAD_DIMENSIONS (0x20) counts threads
 // rather than groups, converting via the bound PSO's [numthreads(8, 1, 1)].
 void thread_dimensions(ID3D12Device* device) {
@@ -4171,6 +4344,7 @@ constexpr Scenario scenarios[] = {
     {L"ray-tracing-builder", ray_tracing_builder},
     {L"ray-tracing-guest-memory", ray_tracing_guest_memory},
     {L"ray-tracing-rehydrate", ray_tracing_rehydrate},
+    {L"ray-tracing-refused-structure", ray_tracing_refused_structure},
     {L"thread-dimensions", thread_dimensions},
     {L"descriptor-reclaim", descriptor_reclaim},
     {L"unwritten-descriptors", unwritten_descriptors},
@@ -4251,7 +4425,7 @@ const wchar_t* const selftest_scenarios[] = {L"labels",            L"cross-queue
                                              L"indirect-dispatch", L"gpu-indirect-dispatch", L"gpu-indirect-order",
                                              L"mesh-signature", L"mesh-signature-none",
                                              L"dispatch-wait", L"texture-readback", L"texture-publication",
-                                             L"ray-tracing-builder", L"ray-tracing-guest-memory", L"ray-tracing-rehydrate",
+                                             L"ray-tracing-builder", L"ray-tracing-guest-memory", L"ray-tracing-rehydrate", L"ray-tracing-refused-structure",
                                              L"thread-dimensions", L"descriptor-reclaim", L"unwritten-descriptors",
                                              L"xbox-shader", L"wave64-shader", L"mixed-lane",
                                              L"raster-tables", L"lane-spill-interp", L"wave-alloc", L"raster-samplers", L"compute-root",
