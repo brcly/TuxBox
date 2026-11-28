@@ -538,3 +538,66 @@ fn slots_and_copies_stay_inside_their_chunk() {
     assert_eq!(chunks.runs(1000, 1000).collect::<Vec<_>>(), [(1000, 1000)]);
     assert_eq!(chunks.runs(5, 0).count(), 0);
 }
+
+#[test]
+fn index_map_follows_records_the_title_copies_with_ordinary_stores() {
+    use index_map::Refresh;
+    let mut backing = vec![0u8; 16 * INLINE_BYTES];
+    let base = backing.as_mut_ptr() as usize;
+    let at = |index: usize| base + index * INLINE_BYTES;
+    let registry = Arc::new(Registry::default());
+    {
+        let arena = Arc::new(Arena {
+            base_address: base,
+            native: None,
+            registry: registry.clone(),
+            stride: 32,
+            count: 16,
+            limit: 16,
+            inline: true,
+            authored: Mutex::default(),
+            tables: Mutex::new(Tables::default()),
+            strides: Mutex::default(),
+            in_flight: Mutex::default(),
+            pins: Mutex::default(),
+        });
+        {
+            let mut entries = registry.arenas.lock().unwrap();
+            entries.insert(base, Arc::downgrade(&arena));
+            registry.count.store(entries.len(), Ordering::Release);
+        }
+        // The API writes indices 1, 3 and 5, and the map gives each a slot.
+        for index in [1, 3, 5] {
+            arena.author(at(index), 1);
+            arena.publish(at(index), 1);
+        }
+        {
+            let mut tables = arena.tables.lock().unwrap();
+            let mut retired = RetiredViews::default();
+            index_map::activate_for_test(&arena, &mut tables, &mut retired).unwrap();
+        }
+        assert_eq!(arena.refresh_index_map(), Refresh::default());
+        // The title copies index 5's record over index 1 with ordinary stores.
+        unsafe { core::ptr::copy_nonoverlapping(at(5) as *const u8, at(1) as *mut u8, INLINE_BYTES) };
+        assert_eq!(arena.refresh_index_map(), Refresh { copies: 1, ..Refresh::default() });
+        // A copy is followed once, and keeps its view when the source is written again.
+        assert_eq!(arena.refresh_index_map(), Refresh::default());
+        // A copy whose source is written again before the map sees it names a
+        // descriptor that is gone.
+        unsafe { core::ptr::copy_nonoverlapping(at(5) as *const u8, at(3) as *mut u8, INLINE_BYTES) };
+        arena.author(at(5), 1);
+        arena.publish(at(5), 1);
+        assert_eq!(arena.refresh_index_map(), Refresh { stale: 1, ..Refresh::default() });
+        // An empty record gets a null view.
+        unsafe { core::ptr::write_bytes(at(5) as *mut u8, 0, INLINE_BYTES) };
+        assert_eq!(arena.refresh_index_map(), Refresh { cleared: 1, ..Refresh::default() });
+        // Bytes that are not a record leave the slot as it was.
+        unsafe { (at(1) as *mut u64).write_unaligned(0x3f80_0000_3f80_0000) };
+        assert_eq!(arena.refresh_index_map(), Refresh { unresolved: 1, ..Refresh::default() });
+        // The API writes index 1 again: its slot holds that view once more.
+        arena.author(at(1), 1);
+        arena.publish(at(1), 1);
+        assert_eq!(arena.refresh_index_map(), Refresh::default());
+    }
+    drop(backing);
+}

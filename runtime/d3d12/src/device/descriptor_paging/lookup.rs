@@ -112,38 +112,7 @@ impl Arena {
                             materialized +=
                                 usize::from(record.source != cell || INLINE_BYTES != self.stride);
                         } else if record == InlineDescriptor::default() {
-                            // Inactive slots have no resource. Use a valid null SRV
-                            // rather than copying an uninitialized host descriptor.
-                            use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_R8G8B8A8_UNORM;
-                            let null = D3D12_SHADER_RESOURCE_VIEW_DESC {
-                                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-                                ViewDimension: D3D12_SRV_DIMENSION_TEXTURE2D,
-                                Shader4ComponentMapping: D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
-                                ..Default::default()
-                            };
-                            retired.imported.extend(native.imported.clear_deferred(
-                                self.stride,
-                                destination.ptr,
-                                1,
-                            ));
-                            retired.placed.extend(native.placed.clear_deferred(
-                                self.stride,
-                                destination.ptr,
-                                1,
-                            ));
-                            retired.scenes.extend(native.scenes.clear_deferred(
-                                self.stride,
-                                destination.ptr,
-                                1,
-                            ));
-                            crate::diagnostics::display::texture_view(destination.ptr, None, None);
-                            unsafe {
-                                native.device.CreateShaderResourceView(
-                                    None,
-                                    Some(&null),
-                                    destination,
-                                )
-                            };
+                            self.null_view(destination, &mut retired);
                         } else {
                             if crate::diagnostics::display::trace_views() {
                                 crate::diagnostics::log_once(&std::sync::Once::new(), || format!(
